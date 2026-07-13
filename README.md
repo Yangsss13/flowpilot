@@ -1,113 +1,189 @@
 # MiniKVX-Agent
 
-MiniKVX-Agent 是一个基于 Go 的轻量级 Agent / Workflow 任务执行平台，目标是作为 2026 年 8 月初投递简历的主业务项目。
+MiniKVX-Agent 是一个基于 Go 的轻量级工作流任务执行平台。用户可以创建包含多个有序步骤的任务，后端负责校验任务定义、持久化状态，并按统一状态机执行和记录过程。
 
-## v1 定位
+项目当前处于 v1 开发阶段，优先完成可运行、可测试、可解释的后端业务闭环，不提前堆叠未验证的中间件。
 
-用户可以在浏览器中创建一个多步骤任务，后端按照步骤执行任务，维护任务状态和执行日志，并支持查看任务执行过程。
+## 当前进度
 
-## v1 技术栈
+已完成：
 
-- Go
+- 使用 Gin 提供任务创建、列表和详情接口。
+- 使用 GORM + MySQL 持久化任务、步骤和执行日志。
+- 创建任务与全部步骤使用事务，任一写入失败则整体回滚。
+- 实现 `Pending / Running / Success / Failed` 状态机和条件状态更新。
+- 实现 `sleep / http_mock / shell_mock` 三种 mock 动作及参数校验。
+- 实现 Task Executor：步骤顺序执行、失败即停止、失败任务重试时跳过已成功步骤。
+- 状态变化和对应日志使用短事务共同提交。
+- 提供 MySQL 8.4 Docker Compose 本地环境。
+- 覆盖领域、Service、Handler、Executor 单元测试和真实 MySQL 集成测试。
+
+开发中：
+
+- 固定并发 WorkerPool。
+- `POST /api/tasks/:id/run` 异步提交接口。
+- `GET /api/tasks/:id/logs` 日志查询接口。
+- 完整执行链路的演示和评测。
+
+Redis 防重复锁、RabbitMQ、前端和更复杂的工作流能力尚未完成，不计入当前功能。
+
+## 技术栈
+
+- Go 1.26
 - Gin
 - GORM
-- MySQL
-- React 或 Vue 前端，具体以后端联调方便为准
+- MySQL 8.4
+- Docker Compose
 
-## v1 功能
-
-- 创建任务。
-- 任务包含多个步骤。
-- 查询任务列表。
-- 查询任务详情。
-- 执行任务。
-- 查看执行日志。
-- 状态流转校验，避免非法状态跳转。
-- 执行日志分级：`INFO`、`WARN`、`ERROR`。
-- 状态流转：
-  - `Pending`
-  - `Running`
-  - `Success`
-  - `Failed`
-
-## 7 月底增强项
-
-- Redis 防重复执行锁。
-- 健康检查接口：`GET /api/health`，检查 MySQL / Redis / RabbitMQ 可用性。
-- Demo 数据或一键演示脚本，方便 README 和面试演示。
-- Docker Compose。
-- README、截图、接口文档。
-- 基础测试。
-- 基础评测：
-  - Redis 锁并发防重复验证。
-  - 任务提交接口耗时记录。
-
-## 8 月上旬增强项
-
-- RabbitMQ 异步任务执行。
-- Worker 消费 taskId 后驱动任务状态流转。
-- 消费 ACK。
-- 任务执行幂等校验。
-- 失败重试：`max_retry = 3`，超过次数标记 `Failed`。
-- 死信队列可作为后续增强。
-- 异步化评测：
-  - 同步执行 vs RabbitMQ 异步投递的接口耗时对比。
-  - WorkerPool 不同 worker 数下的任务吞吐对比。
-
-## 最终 v2 规划
-
-v1/v1.5 是业务闭环版和可投递版，当前规划内的最终 v2 还包括：
-
-- 简单 DAG：步骤依赖、拓扑执行和环检测。
-- RAG 知识库：文档切块、Embedding、Qdrant、TopK 检索、答案生成和来源引用。
-- 工作流节点：至少支持 HTTP Tool 和 RAG Query。
-- MiniKV checkpoint：保存任务运行步骤和 runtime state，用于恢复演示。
-- RAG 评测：小型问答集、Hit@3、检索耗时和引用命中情况。
-- 完整前端、Docker Compose、健康检查、项目截图和一键 Demo。
-
-## 暂缓或后续
-
-- 复杂分支、动态 DAG 和多 Agent 协作。
-- 多租户权限。
-- WebSocket。
-- 复杂前端交互。
-- 分布式部署。
-- GraphRAG、混合检索、Rerank 和复杂 PDF/OCR。
-
-## 简历表达草稿
+## 架构
 
 ```text
-MiniKVX-Agent：基于 Go 的轻量级 Agent 工作流任务执行平台
-技术栈：Go, Gin, GORM, MySQL, Redis, RabbitMQ, Qdrant, RAG, Docker Compose, React
+HTTP Request
+    ↓
+Handler          解析 JSON、转换 HTTP 状态码
+    ↓
+Service          校验业务规则、构造领域对象
+    ↓
+Repository       执行事务和数据库读写
+    ↓
+MySQL            保存任务、步骤和执行日志
 
-- 基于 Gin + GORM 实现任务创建、步骤编排、任务执行、状态流转和日志查询接口，使用 MySQL 持久化任务、步骤与执行记录。
-- 设计 Pending / Running / Success / Failed 状态机，统一管理任务和步骤状态，避免执行过程状态混乱。
-- 引入 WorkerPool 执行任务步骤，将任务提交与具体执行逻辑解耦，提升多任务并发处理能力。
-- 基于 Redis 实现任务执行互斥锁，避免同一任务被重复触发导致重复执行和日志污染。
-- 引入 RabbitMQ 异步调度任务执行请求，接口层投递 taskId 后快速返回，由 Worker 消费消息并通过状态校验保证重复消费幂等。
-- 实现 RAG 工作流节点，支持文档切块、Embedding、Qdrant TopK 检索和来源引用，并通过 Hit@3 与检索耗时评测验证效果。
-- 使用 MiniKV 保存任务 runtime checkpoint，为任务恢复提供轻量状态存储。
-- 提供前端可视化页面，支持浏览器完成任务创建、执行、状态查看和日志追踪。
-- 通过评测对比同步执行与 RabbitMQ 异步投递模式下的接口耗时，并评估不同 Worker 数对任务吞吐的影响。
+Task Executor    编排任务和步骤状态
+    ↓
+Step Executor    执行 sleep/http_mock/shell_mock
 ```
 
-RabbitMQ 未完成前，简历技术栈和亮点里先不要写 RabbitMQ。
-RAG、DAG、MiniKV checkpoint 未真实跑通前，同样不要提前写入简历。
-
-## 评测规划
-
-详细评测计划见 [docs/evaluation-plan.md](./docs/evaluation-plan.md)。
-
-优先做三项：
-
-1. Redis 锁并发防重复验证：并发触发同一任务，预期只有一个请求获得执行权。
-2. RabbitMQ 前后接口耗时对比：证明任务提交接口从同步等待变为快速返回。
-3. WorkerPool 并发度对比：评估 worker 数为 1/2/4/8 时的任务吞吐和总耗时。
-
-## 最小演示闭环
-
-README 和前端演示要覆盖这条链路：
+核心数据关系：
 
 ```text
-创建任务 -> 配置步骤 -> 执行任务 -> 状态流转 -> 写分级日志 -> 前端查看 -> Redis 防重复 -> RabbitMQ 异步执行 -> 评测证明效果
+Task 1 ── N TaskStep
+Task 1 ── N ExecutionLog
+TaskStep 1 ── N ExecutionLog
 ```
+
+## 状态机
+
+```text
+Pending ──→ Running ──→ Success
+                  │
+                  └────→ Failed ──→ Running
+```
+
+- `Success` 当前为终态，不能直接重新执行。
+- 状态更新同时校验旧状态，例如 `WHERE id = ? AND status = 'Pending'`。
+- 条件更新可避免多个执行者同时获得同一任务的执行权。
+
+## API
+
+| 方法 | 路径 | 状态 | 说明 |
+|---|---|---|---|
+| `POST` | `/api/tasks` | 已完成 | 创建任务及有序步骤 |
+| `GET` | `/api/tasks` | 已完成 | 查询轻量任务列表 |
+| `GET` | `/api/tasks/:id` | 已完成 | 查询任务详情和有序步骤 |
+| `POST` | `/api/tasks/:id/run` | 开发中 | 提交任务到 WorkerPool |
+| `GET` | `/api/tasks/:id/logs` | 开发中 | 查询执行日志 |
+
+### 创建任务
+
+```bash
+curl -X POST http://127.0.0.1:8080/api/tasks \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Daily report",
+    "description": "Generate a daily report",
+    "steps": [
+      {
+        "name": "Wait for data",
+        "action_type": "sleep",
+        "action_payload": {"duration_ms": 100}
+      },
+      {
+        "name": "Build report",
+        "action_type": "http_mock",
+        "action_payload": {"status": 200}
+      }
+    ]
+  }'
+```
+
+创建成功返回 `201 Created`，任务和步骤初始状态均为 `Pending`。
+
+```bash
+curl http://127.0.0.1:8080/api/tasks
+curl http://127.0.0.1:8080/api/tasks/1
+```
+
+## 本地运行
+
+1. 创建本地配置：
+
+```bash
+cp .env.example .env
+```
+
+修改 `.env` 中的开发密码。`.env` 已被 Git 忽略，不要提交真实密码。
+
+2. 启动 MySQL：
+
+```bash
+docker compose up -d mysql
+docker compose ps
+```
+
+3. 将 `.env` 中的变量加载到当前终端后启动服务。
+
+PowerShell：
+
+```powershell
+Get-Content .env | ForEach-Object {
+    if ($_ -and -not $_.StartsWith('#')) {
+        $pair = $_.Split('=', 2)
+        Set-Item -Path ("Env:" + $pair[0]) -Value $pair[1]
+    }
+}
+go run ./cmd/server
+```
+
+服务默认监听 `http://127.0.0.1:8080`。
+
+停止 MySQL 容器：
+
+```bash
+docker compose down
+```
+
+不要随意添加 `-v`；`docker compose down -v` 会删除 MySQL 数据卷。
+
+## 测试
+
+运行单元测试：
+
+```bash
+go test ./...
+```
+
+运行真实 MySQL 集成测试前，先启动 Compose 并加载 `.env`，再设置：
+
+```text
+MINIKVX_INTEGRATION=1
+```
+
+集成测试覆盖：
+
+- 创建任务和步骤真实落库。
+- 步骤写入失败时任务事务回滚。
+- 列表不加载全部步骤，详情按 `step_order` 加载步骤。
+- 重复状态抢占只允许一个更新成功。
+- 任务级日志与步骤级日志关联正确。
+
+## 下一步
+
+1. 完成 WorkerPool 和任务提交接口。
+2. 完成执行日志查询与端到端演示。
+3. 增加 Redis 任务执行锁和并发防重复验证。
+4. 补充健康检查、Demo、基础评测和前端页面。
+5. v2 再引入 RabbitMQ，评测同步执行与异步提交的接口耗时差异。
+
+## 项目边界
+
+当前实现是用于学习和演示任务编排、状态机、事务、并发控制与异步执行的轻量项目，不是生产级分布式调度系统。
