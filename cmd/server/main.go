@@ -5,6 +5,10 @@ import (
 
 	"minikvx-agent/internal/config"
 	"minikvx-agent/internal/database"
+	"minikvx-agent/internal/handler"
+	"minikvx-agent/internal/httpapi"
+	"minikvx-agent/internal/repository"
+	"minikvx-agent/internal/service"
 )
 
 func main() {
@@ -18,5 +22,14 @@ func main() {
 		log.Fatalf("start server: %v", err)
 	}
 
-	log.Println("MiniKVX-Agent database is ready")
+	taskRepository := repository.NewGormTaskRepository(db)
+	taskService := service.NewTaskService(taskRepository)
+	taskHandler := handler.NewTaskHandler(taskService)
+	router := httpapi.NewRouter(taskHandler)
+
+	address := ":" + cfg.Server.Port
+	log.Printf("MiniKVX-Agent listening on %s", address)
+	if err := router.Run(address); err != nil {
+		log.Fatalf("run HTTP server: %v", err)
+	}
 }

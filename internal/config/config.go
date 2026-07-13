@@ -4,6 +4,11 @@ import "os"
 
 type Config struct {
 	Database DatabaseConfig
+	Server   ServerConfig
+}
+
+type ServerConfig struct {
+	Port string
 }
 
 type DatabaseConfig struct {
@@ -22,6 +27,9 @@ func Load() Config {
 			User:     envOrDefault("DB_USER", "minikvx"),
 			Password: os.Getenv("DB_PASSWORD"),
 			Name:     envOrDefault("DB_NAME", "minikvx_agent"),
+		},
+		Server: ServerConfig{
+			Port: envOrDefault("APP_PORT", "8080"),
 		},
 	}
 }
