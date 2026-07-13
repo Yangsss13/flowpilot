@@ -40,8 +40,8 @@ func TestTaskQueryEndpointsWithMySQL(t *testing.T) {
 	createBody := []byte(`{
 		"name":"` + name + `",
 		"steps":[
-			{"name":"first","action_type":"sleep","action_payload":{}},
-			{"name":"second","action_type":"http_mock","action_payload":{}}
+			{"name":"first","action_type":"sleep","action_payload":{"duration_ms":1}},
+			{"name":"second","action_type":"http_mock","action_payload":{"status":200}}
 		]
 	}`)
 	createResponse := performRequest(router, http.MethodPost, "/api/tasks", createBody)

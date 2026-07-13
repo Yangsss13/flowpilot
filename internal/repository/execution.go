@@ -1,0 +1,103 @@
+package repository
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"gorm.io/gorm"
+
+	"minikvx-agent/internal/domain"
+)
+
+var ErrStateConflict = errors.New("state conflict")
+
+type ExecutionRepository interface {
+	TransitionTask(ctx context.Context, taskID uint64, current, next domain.Status, level domain.LogLevel, message string) error
+	TransitionStep(ctx context.Context, taskID, stepID uint64, current, next domain.Status, level domain.LogLevel, message string) error
+}
+
+type GormExecutionRepository struct {
+	db *gorm.DB
+}
+
+func NewGormExecutionRepository(db *gorm.DB) *GormExecutionRepository {
+	return &GormExecutionRepository{db: db}
+}
+
+func (r *GormExecutionRepository) TransitionTask(
+	ctx context.Context,
+	taskID uint64,
+	current, next domain.Status,
+	level domain.LogLevel,
+	message string,
+) error {
+	if err := domain.ValidateTransition(current, next); err != nil {
+		return fmt.Errorf("validate task transition: %w", err)
+	}
+
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&domain.Task{}).
+			Where("id = ? AND status = ?", taskID, current).
+			Update("status", next)
+		if result.Error != nil {
+			return fmt.Errorf("update task status: %w", result.Error)
+		}
+		if result.RowsAffected != 1 {
+			return ErrStateConflict
+		}
+
+		logEntry := domain.ExecutionLog{
+			TaskID:  taskID,
+			Level:   level,
+			Message: message,
+		}
+		if err := tx.Create(&logEntry).Error; err != nil {
+			return fmt.Errorf("create task transition log: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("transition task: %w", err)
+	}
+	return nil
+}
+
+func (r *GormExecutionRepository) TransitionStep(
+	ctx context.Context,
+	taskID, stepID uint64,
+	current, next domain.Status,
+	level domain.LogLevel,
+	message string,
+) error {
+	if err := domain.ValidateTransition(current, next); err != nil {
+		return fmt.Errorf("validate step transition: %w", err)
+	}
+
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&domain.TaskStep{}).
+			Where("id = ? AND task_id = ? AND status = ?", stepID, taskID, current).
+			Update("status", next)
+		if result.Error != nil {
+			return fmt.Errorf("update step status: %w", result.Error)
+		}
+		if result.RowsAffected != 1 {
+			return ErrStateConflict
+		}
+
+		logEntry := domain.ExecutionLog{
+			TaskID:  taskID,
+			StepID:  &stepID,
+			Level:   level,
+			Message: message,
+		}
+		if err := tx.Create(&logEntry).Error; err != nil {
+			return fmt.Errorf("create step transition log: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("transition step: %w", err)
+	}
+	return nil
+}

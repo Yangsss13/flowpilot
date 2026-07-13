@@ -5,6 +5,14 @@ import (
 	"time"
 )
 
+type LogLevel string
+
+const (
+	LogLevelInfo  LogLevel = "INFO"
+	LogLevelWarn  LogLevel = "WARN"
+	LogLevelError LogLevel = "ERROR"
+)
+
 // Task is the workflow definition and its current overall state.
 type Task struct {
 	ID          uint64     `gorm:"primaryKey" json:"id"`
@@ -36,7 +44,7 @@ type ExecutionLog struct {
 	ID        uint64    `gorm:"primaryKey" json:"id"`
 	TaskID    uint64    `gorm:"not null;index" json:"task_id"`
 	StepID    *uint64   `gorm:"index" json:"step_id,omitempty"`
-	Level     string    `gorm:"size:10;not null;index" json:"level"`
+	Level     LogLevel  `gorm:"type:varchar(10);not null;index" json:"level"`
 	Message   string    `gorm:"size:1000;not null" json:"message"`
 	CreatedAt time.Time `gorm:"index" json:"created_at"`
 }

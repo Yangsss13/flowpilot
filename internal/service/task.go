@@ -7,18 +7,13 @@ import (
 	"fmt"
 	"strings"
 
+	"minikvx-agent/internal/action"
 	"minikvx-agent/internal/domain"
 	"minikvx-agent/internal/repository"
 )
 
 var ErrInvalidInput = errors.New("invalid input")
 var ErrTaskNotFound = errors.New("task not found")
-
-var supportedActionTypes = map[string]struct{}{
-	"sleep":      {},
-	"http_mock":  {},
-	"shell_mock": {},
-}
 
 type CreateTaskInput struct {
 	Name        string
@@ -94,11 +89,8 @@ func buildPendingStep(index int, input CreateTaskStepInput) (domain.TaskStep, er
 	if name == "" {
 		return domain.TaskStep{}, fmt.Errorf("%w: step %d name is required", ErrInvalidInput, index+1)
 	}
-	if _, ok := supportedActionTypes[input.ActionType]; !ok {
-		return domain.TaskStep{}, fmt.Errorf("%w: step %d action type %q is not supported", ErrInvalidInput, index+1, input.ActionType)
-	}
-	if len(input.ActionPayload) == 0 || !json.Valid(input.ActionPayload) {
-		return domain.TaskStep{}, fmt.Errorf("%w: step %d action payload must be valid JSON", ErrInvalidInput, index+1)
+	if err := action.Validate(input.ActionType, input.ActionPayload); err != nil {
+		return domain.TaskStep{}, fmt.Errorf("%w: step %d action is invalid: %v", ErrInvalidInput, index+1, err)
 	}
 
 	return domain.TaskStep{
