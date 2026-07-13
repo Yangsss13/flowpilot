@@ -1,0 +1,7 @@
+.env
+.gocache/
+.gomodcache/
+*.exe
+*.log
+node_modules/
+data/
