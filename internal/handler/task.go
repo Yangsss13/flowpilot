@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 
@@ -12,12 +13,14 @@ import (
 	"minikvx-agent/internal/service"
 )
 
-type TaskCreator interface {
+type TaskApplication interface {
 	Create(ctx context.Context, input service.CreateTaskInput) (*domain.Task, error)
+	List(ctx context.Context) ([]domain.Task, error)
+	GetByID(ctx context.Context, id uint64) (*domain.Task, error)
 }
 
 type TaskHandler struct {
-	service TaskCreator
+	service TaskApplication
 }
 
 type createTaskRequest struct {
@@ -32,8 +35,36 @@ type createTaskStepRequest struct {
 	ActionPayload json.RawMessage `json:"action_payload"`
 }
 
-func NewTaskHandler(service TaskCreator) *TaskHandler {
+func NewTaskHandler(service TaskApplication) *TaskHandler {
 	return &TaskHandler{service: service}
+}
+
+func (h *TaskHandler) List(c *gin.Context) {
+	tasks, err := h.service.List(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+		return
+	}
+	c.JSON(http.StatusOK, tasks)
+}
+
+func (h *TaskHandler) GetByID(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil || id == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "task id must be a positive integer"})
+		return
+	}
+
+	task, err := h.service.GetByID(c.Request.Context(), id)
+	if errors.Is(err, service.ErrTaskNotFound) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "task not found"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+		return
+	}
+	c.JSON(http.StatusOK, task)
 }
 
 func (h *TaskHandler) Create(c *gin.Context) {

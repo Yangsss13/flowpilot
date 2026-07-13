@@ -12,6 +12,7 @@ import (
 )
 
 var ErrInvalidInput = errors.New("invalid input")
+var ErrTaskNotFound = errors.New("task not found")
 
 var supportedActionTypes = map[string]struct{}{
 	"sleep":      {},
@@ -65,6 +66,25 @@ func (s *TaskService) Create(ctx context.Context, input CreateTaskInput) (*domai
 
 	if err := s.repository.Create(ctx, task); err != nil {
 		return nil, fmt.Errorf("create task: %w", err)
+	}
+	return task, nil
+}
+
+func (s *TaskService) List(ctx context.Context) ([]domain.Task, error) {
+	tasks, err := s.repository.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list tasks: %w", err)
+	}
+	return tasks, nil
+}
+
+func (s *TaskService) GetByID(ctx context.Context, id uint64) (*domain.Task, error) {
+	task, err := s.repository.GetByID(ctx, id)
+	if errors.Is(err, repository.ErrNotFound) {
+		return nil, ErrTaskNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get task: %w", err)
 	}
 	return task, nil
 }

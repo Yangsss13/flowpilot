@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"gorm.io/gorm"
@@ -10,8 +11,42 @@ import (
 	"minikvx-agent/internal/domain"
 )
 
+var ErrNotFound = errors.New("repository: not found")
+
 type TaskRepository interface {
 	Create(ctx context.Context, task *domain.Task) error
+	List(ctx context.Context) ([]domain.Task, error)
+	GetByID(ctx context.Context, id uint64) (*domain.Task, error)
+}
+
+// List returns lightweight task summaries. Associations are intentionally not
+// preloaded because the list endpoint does not need every task's steps.
+func (r *GormTaskRepository) List(ctx context.Context) ([]domain.Task, error) {
+	var tasks []domain.Task
+	if err := r.db.WithContext(ctx).
+		Order("created_at DESC, id DESC").
+		Limit(100).
+		Find(&tasks).Error; err != nil {
+		return nil, fmt.Errorf("list tasks: %w", err)
+	}
+	return tasks, nil
+}
+
+// GetByID returns one task and its steps in business execution order.
+func (r *GormTaskRepository) GetByID(ctx context.Context, id uint64) (*domain.Task, error) {
+	var task domain.Task
+	err := r.db.WithContext(ctx).
+		Preload("Steps", func(db *gorm.DB) *gorm.DB {
+			return db.Order("step_order ASC")
+		}).
+		First(&task, id).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get task by id: %w", err)
+	}
+	return &task, nil
 }
 
 type GormTaskRepository struct {

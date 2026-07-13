@@ -7,10 +7,13 @@ import (
 	"testing"
 
 	"minikvx-agent/internal/domain"
+	"minikvx-agent/internal/repository"
 )
 
 type fakeTaskRepository struct {
 	created *domain.Task
+	tasks   []domain.Task
+	task    *domain.Task
 	err     error
 	calls   int
 }
@@ -19,6 +22,16 @@ func (f *fakeTaskRepository) Create(_ context.Context, task *domain.Task) error 
 	f.calls++
 	f.created = task
 	return f.err
+}
+
+func (f *fakeTaskRepository) List(_ context.Context) ([]domain.Task, error) {
+	f.calls++
+	return f.tasks, f.err
+}
+
+func (f *fakeTaskRepository) GetByID(_ context.Context, _ uint64) (*domain.Task, error) {
+	f.calls++
+	return f.task, f.err
 }
 
 func TestTaskServiceCreateBuildsPendingOrderedTask(t *testing.T) {
@@ -107,4 +120,14 @@ func validSteps() []CreateTaskStepInput {
 		ActionType:    "sleep",
 		ActionPayload: json.RawMessage(`{"duration_ms":100}`),
 	}}
+}
+
+func TestTaskServiceGetByIDMapsNotFound(t *testing.T) {
+	repo := &fakeTaskRepository{err: repository.ErrNotFound}
+	service := NewTaskService(repo)
+
+	_, err := service.GetByID(context.Background(), 999)
+	if !errors.Is(err, ErrTaskNotFound) {
+		t.Fatalf("GetByID() error = %v, want ErrTaskNotFound", err)
+	}
 }

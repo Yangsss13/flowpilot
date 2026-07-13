@@ -11,6 +11,8 @@ func NewRouter(taskHandler *handler.TaskHandler) *gin.Engine {
 
 	api := router.Group("/api")
 	api.POST("/tasks", taskHandler.Create)
+	api.GET("/tasks", taskHandler.List)
+	api.GET("/tasks/:id", taskHandler.GetByID)
 
 	return router
 }

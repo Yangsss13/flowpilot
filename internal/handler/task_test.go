@@ -18,6 +18,7 @@ import (
 type fakeTaskCreator struct {
 	input service.CreateTaskInput
 	task  *domain.Task
+	tasks []domain.Task
 	err   error
 	calls int
 }
@@ -25,6 +26,16 @@ type fakeTaskCreator struct {
 func (f *fakeTaskCreator) Create(_ context.Context, input service.CreateTaskInput) (*domain.Task, error) {
 	f.calls++
 	f.input = input
+	return f.task, f.err
+}
+
+func (f *fakeTaskCreator) List(_ context.Context) ([]domain.Task, error) {
+	f.calls++
+	return f.tasks, f.err
+}
+
+func (f *fakeTaskCreator) GetByID(_ context.Context, _ uint64) (*domain.Task, error) {
+	f.calls++
 	return f.task, f.err
 }
 
@@ -88,13 +99,64 @@ func TestTaskHandlerCreateMapsServiceErrors(t *testing.T) {
 	}
 }
 
-func performCreateRequest(t *testing.T, creator TaskCreator, body string) *httptest.ResponseRecorder {
+func TestTaskHandlerListReturnsTasks(t *testing.T) {
+	creator := &fakeTaskCreator{tasks: []domain.Task{{ID: 2, Name: "newest", Status: domain.StatusPending}}}
+	response := performRequest(t, creator, http.MethodGet, "/api/tasks", "")
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", response.Code, http.StatusOK, response.Body.String())
+	}
+	if creator.calls != 1 {
+		t.Fatalf("service calls = %d, want 1", creator.calls)
+	}
+}
+
+func TestTaskHandlerGetByID(t *testing.T) {
+	tests := []struct {
+		name       string
+		path       string
+		task       *domain.Task
+		err        error
+		wantStatus int
+		wantCalls  int
+	}{
+		{name: "success", path: "/api/tasks/1", task: &domain.Task{ID: 1, Name: "task"}, wantStatus: http.StatusOK, wantCalls: 1},
+		{name: "invalid id", path: "/api/tasks/not-a-number", wantStatus: http.StatusBadRequest},
+		{name: "zero id", path: "/api/tasks/0", wantStatus: http.StatusBadRequest},
+		{name: "not found", path: "/api/tasks/999", err: service.ErrTaskNotFound, wantStatus: http.StatusNotFound, wantCalls: 1},
+		{name: "internal error", path: "/api/tasks/1", err: errors.New("database unavailable"), wantStatus: http.StatusInternalServerError, wantCalls: 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			creator := &fakeTaskCreator{task: tt.task, err: tt.err}
+			response := performRequest(t, creator, http.MethodGet, tt.path, "")
+
+			if response.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d; body=%s", response.Code, tt.wantStatus, response.Body.String())
+			}
+			if creator.calls != tt.wantCalls {
+				t.Fatalf("service calls = %d, want %d", creator.calls, tt.wantCalls)
+			}
+		})
+	}
+}
+
+func performCreateRequest(t *testing.T, creator TaskApplication, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	return performRequest(t, creator, http.MethodPost, "/api/tasks", body)
+}
+
+func performRequest(t *testing.T, creator TaskApplication, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	router.POST("/api/tasks", NewTaskHandler(creator).Create)
+	handler := NewTaskHandler(creator)
+	router.POST("/api/tasks", handler.Create)
+	router.GET("/api/tasks", handler.List)
+	router.GET("/api/tasks/:id", handler.GetByID)
 
-	request := httptest.NewRequest(http.MethodPost, "/api/tasks", bytes.NewBufferString(body))
+	request := httptest.NewRequest(method, path, bytes.NewBufferString(body))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, request)
