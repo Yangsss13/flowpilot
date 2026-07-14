@@ -16,13 +16,16 @@ import (
 
 func OpenMySQL(cfg config.DatabaseConfig) (*gorm.DB, error) {
 	dsnConfig := mysqlDriver.Config{
-		User:      cfg.User,
-		Passwd:    cfg.Password,
-		Net:       "tcp",
-		Addr:      net.JoinHostPort(cfg.Host, cfg.Port),
-		DBName:    cfg.Name,
-		ParseTime: true,
-		Loc:       time.Local,
+		User:         cfg.User,
+		Passwd:       cfg.Password,
+		Net:          "tcp",
+		Addr:         net.JoinHostPort(cfg.Host, cfg.Port),
+		DBName:       cfg.Name,
+		ParseTime:    true,
+		Loc:          time.Local,
+		Timeout:      3 * time.Second,
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 5 * time.Second,
 		Params: map[string]string{
 			"charset": "utf8mb4",
 		},

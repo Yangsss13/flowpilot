@@ -1,4 +1,5 @@
 .env
+.agents/
 .gocache/
 .gomodcache/
 *.exe

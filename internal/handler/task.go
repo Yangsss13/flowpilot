@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strconv"
 
 	"github.com/gin-gonic/gin"
 
@@ -49,9 +48,8 @@ func (h *TaskHandler) List(c *gin.Context) {
 }
 
 func (h *TaskHandler) GetByID(c *gin.Context) {
-	id, err := strconv.ParseUint(c.Param("id"), 10, 64)
-	if err != nil || id == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "task id must be a positive integer"})
+	id, ok := parseTaskID(c)
+	if !ok {
 		return
 	}
 

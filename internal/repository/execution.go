@@ -25,6 +25,17 @@ func NewGormExecutionRepository(db *gorm.DB) *GormExecutionRepository {
 	return &GormExecutionRepository{db: db}
 }
 
+func (r *GormExecutionRepository) ListLogs(ctx context.Context, taskID uint64) ([]domain.ExecutionLog, error) {
+	var logs []domain.ExecutionLog
+	if err := r.db.WithContext(ctx).
+		Where("task_id = ?", taskID).
+		Order("created_at ASC, id ASC").
+		Find(&logs).Error; err != nil {
+		return nil, fmt.Errorf("list execution logs: %w", err)
+	}
+	return logs, nil
+}
+
 func (r *GormExecutionRepository) TransitionTask(
 	ctx context.Context,
 	taskID uint64,

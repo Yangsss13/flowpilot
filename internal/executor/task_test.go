@@ -29,7 +29,10 @@ type fakeExecutionStateStore struct {
 	err    error
 }
 
-func (f *fakeExecutionStateStore) TransitionTask(_ context.Context, taskID uint64, current, next domain.Status, _ domain.LogLevel, _ string) error {
+func (f *fakeExecutionStateStore) TransitionTask(ctx context.Context, taskID uint64, current, next domain.Status, _ domain.LogLevel, _ string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	f.events = append(f.events, transitionEvent{kind: "task", id: taskID, current: current, next: next})
 	if f.err != nil {
 		return f.err
@@ -37,7 +40,10 @@ func (f *fakeExecutionStateStore) TransitionTask(_ context.Context, taskID uint6
 	return domain.ValidateTransition(current, next)
 }
 
-func (f *fakeExecutionStateStore) TransitionStep(_ context.Context, _ uint64, stepID uint64, current, next domain.Status, _ domain.LogLevel, _ string) error {
+func (f *fakeExecutionStateStore) TransitionStep(ctx context.Context, _ uint64, stepID uint64, current, next domain.Status, _ domain.LogLevel, _ string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	f.events = append(f.events, transitionEvent{kind: "step", id: stepID, current: current, next: next})
 	if f.err != nil {
 		return f.err
@@ -48,6 +54,15 @@ func (f *fakeExecutionStateStore) TransitionStep(_ context.Context, _ uint64, st
 type fakeStepRunner struct {
 	calls  []uint64
 	failID uint64
+}
+
+type cancellingStepRunner struct {
+	cancel context.CancelFunc
+}
+
+func (r *cancellingStepRunner) Execute(_ context.Context, _ domain.TaskStep) error {
+	r.cancel()
+	return context.Canceled
 }
 
 func (f *fakeStepRunner) Execute(_ context.Context, step domain.TaskStep) error {
@@ -128,6 +143,27 @@ func TestTaskExecutorSkipsSuccessfulStepsWhenRetryingFailedTask(t *testing.T) {
 	wantStepCalls := []uint64{12, 13}
 	if !equalIDs(steps.calls, wantStepCalls) {
 		t.Fatalf("step calls = %v, want %v", steps.calls, wantStepCalls)
+	}
+}
+
+func TestTaskExecutorPersistsFailureAfterContextCancellation(t *testing.T) {
+	task := pendingTask()
+	task.Steps = task.Steps[:1]
+	states := &fakeExecutionStateStore{}
+	ctx, cancel := context.WithCancel(context.Background())
+	executor := NewTaskExecutor(
+		&fakeTaskSource{task: task},
+		states,
+		&cancellingStepRunner{cancel: cancel},
+	)
+
+	if err := executor.Execute(ctx, task.ID); err == nil {
+		t.Fatal("Execute() returned nil, want cancellation error")
+	}
+
+	last := states.events[len(states.events)-1]
+	if last.kind != "task" || last.next != domain.StatusFailed {
+		t.Fatalf("last event = %#v, want task Failed", last)
 	}
 }
 

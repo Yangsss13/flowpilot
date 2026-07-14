@@ -4,9 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"minikvx-agent/internal/domain"
 )
+
+var ErrTaskNotRunnable = errors.New("task is not runnable")
+var ErrStepExecution = errors.New("step execution failed")
 
 type TaskSource interface {
 	GetByID(ctx context.Context, id uint64) (*domain.Task, error)
@@ -36,6 +40,9 @@ func (e *TaskExecutor) Execute(ctx context.Context, taskID uint64) error {
 	if err != nil {
 		return fmt.Errorf("load task %d: %w", taskID, err)
 	}
+	if task.Status != domain.StatusPending && task.Status != domain.StatusFailed {
+		return fmt.Errorf("%w: task %d has status %s", ErrTaskNotRunnable, task.ID, task.Status)
+	}
 
 	if err := e.states.TransitionTask(
 		ctx, task.ID,
@@ -59,27 +66,34 @@ func (e *TaskExecutor) Execute(ctx context.Context, taskID uint64) error {
 			return e.failTask(ctx, task.ID, fmt.Errorf("start step %d: %w", step.ID, err))
 		}
 
-		if err := e.steps.Execute(ctx, step); err != nil {
-			stepErr := fmt.Errorf("execute step %d: %w", step.ID, err)
+		executionErr := e.steps.Execute(ctx, step)
+		finalizeCtx, cancelFinalize := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+		if executionErr != nil {
+			stepErr := fmt.Errorf("%w: step %d: %v", ErrStepExecution, step.ID, executionErr)
 			transitionErr := e.states.TransitionStep(
-				ctx, task.ID, step.ID,
+				finalizeCtx, task.ID, step.ID,
 				domain.StatusRunning, domain.StatusFailed,
 				domain.LogLevelError, stepErr.Error(),
 			)
+			cancelFinalize()
 			return e.failTask(ctx, task.ID, errors.Join(stepErr, transitionErr))
 		}
 
 		if err := e.states.TransitionStep(
-			ctx, task.ID, step.ID,
+			finalizeCtx, task.ID, step.ID,
 			domain.StatusRunning, domain.StatusSuccess,
 			domain.LogLevelInfo, fmt.Sprintf("step %d succeeded", step.StepOrder),
 		); err != nil {
+			cancelFinalize()
 			return e.failTask(ctx, task.ID, fmt.Errorf("finish step %d: %w", step.ID, err))
 		}
+		cancelFinalize()
 	}
 
+	finalizeCtx, cancelFinalize := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+	defer cancelFinalize()
 	if err := e.states.TransitionTask(
-		ctx, task.ID,
+		finalizeCtx, task.ID,
 		domain.StatusRunning, domain.StatusSuccess,
 		domain.LogLevelInfo, "task succeeded",
 	); err != nil {
@@ -89,8 +103,10 @@ func (e *TaskExecutor) Execute(ctx context.Context, taskID uint64) error {
 }
 
 func (e *TaskExecutor) failTask(ctx context.Context, taskID uint64, cause error) error {
+	finalizeCtx, cancelFinalize := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+	defer cancelFinalize()
 	transitionErr := e.states.TransitionTask(
-		ctx, taskID,
+		finalizeCtx, taskID,
 		domain.StatusRunning, domain.StatusFailed,
 		domain.LogLevelError, cause.Error(),
 	)
