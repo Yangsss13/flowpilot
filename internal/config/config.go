@@ -4,6 +4,7 @@ import "os"
 
 type Config struct {
 	Database DatabaseConfig
+	Redis    RedisConfig
 	Server   ServerConfig
 }
 
@@ -19,6 +20,10 @@ type DatabaseConfig struct {
 	Name     string
 }
 
+type RedisConfig struct {
+	Addr string
+}
+
 func Load() Config {
 	return Config{
 		Database: DatabaseConfig{
@@ -27,6 +32,9 @@ func Load() Config {
 			User:     envOrDefault("DB_USER", "minikvx"),
 			Password: os.Getenv("DB_PASSWORD"),
 			Name:     envOrDefault("DB_NAME", "minikvx_agent"),
+		},
+		Redis: RedisConfig{
+			Addr: envOrDefault("REDIS_ADDR", "127.0.0.1:6379"),
 		},
 		Server: ServerConfig{
 			Port: envOrDefault("APP_PORT", "8080"),

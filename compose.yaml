@@ -18,5 +18,17 @@ services:
       timeout: 3s
       retries: 20
 
+  redis:
+    image: redis:7.4-alpine
+    container_name: minikvx-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
 volumes:
   mysql_data:

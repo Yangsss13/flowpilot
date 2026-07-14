@@ -12,6 +12,7 @@ import (
 
 	"minikvx-agent/internal/config"
 	"minikvx-agent/internal/database"
+	"minikvx-agent/internal/executionlock"
 	"minikvx-agent/internal/executor"
 	"minikvx-agent/internal/handler"
 	"minikvx-agent/internal/httpapi"
@@ -30,15 +31,25 @@ func main() {
 	if err := database.Migrate(db); err != nil {
 		log.Fatalf("start server: %v", err)
 	}
+	redisClient, err := database.OpenRedis(cfg.Redis)
+	if err != nil {
+		log.Fatalf("start server: %v", err)
+	}
+	defer redisClient.Close()
 
 	taskRepository := repository.NewGormTaskRepository(db)
 	executionRepository := repository.NewGormExecutionRepository(db)
 	taskService := service.NewTaskService(taskRepository)
 	stepExecutor := executor.NewStepExecutor()
 	taskExecutor := executor.NewTaskExecutor(taskRepository, executionRepository, stepExecutor)
+	taskLock, err := executionlock.NewRedisTaskLocker(redisClient, 5*time.Minute)
+	if err != nil {
+		log.Fatalf("start task execution lock: %v", err)
+	}
+	lockedTaskExecutor := executionlock.NewLockedTaskRunner(taskLock, taskExecutor)
 	appCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
-	pool, err := workerpool.New(context.Background(), taskExecutor, 4, 100)
+	pool, err := workerpool.New(context.Background(), lockedTaskExecutor, 4, 100)
 	if err != nil {
 		log.Fatalf("start worker pool: %v", err)
 	}
