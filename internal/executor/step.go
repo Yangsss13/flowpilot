@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"minikvx-agent/internal/action"
-	"minikvx-agent/internal/domain"
+	"github.com/Yangsss13/flowpilot/internal/action"
+	"github.com/Yangsss13/flowpilot/internal/domain"
 )
 
 type StepExecutor struct{}

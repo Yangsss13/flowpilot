@@ -1,4 +1,4 @@
-module minikvx-agent
+module github.com/Yangsss13/flowpilot
 
 go 1.26.0
 

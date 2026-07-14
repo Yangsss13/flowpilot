@@ -48,7 +48,7 @@ func (l *RedisTaskLocker) Acquire(ctx context.Context, taskID uint64) (ReleaseFu
 	if err != nil {
 		return nil, fmt.Errorf("generate lock token: %w", err)
 	}
-	key := fmt.Sprintf("minikvx:task:lock:%d", taskID)
+	key := fmt.Sprintf("flowpilot:task:lock:%d", taskID)
 	acquired, err := l.client.SetNX(ctx, key, token, l.ttl).Result()
 	if err != nil {
 		return nil, fmt.Errorf("acquire task lock: %w", err)

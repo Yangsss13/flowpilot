@@ -5,9 +5,9 @@ import (
 	"errors"
 	"fmt"
 
-	"minikvx-agent/internal/domain"
-	"minikvx-agent/internal/repository"
-	"minikvx-agent/internal/workerpool"
+	"github.com/Yangsss13/flowpilot/internal/domain"
+	"github.com/Yangsss13/flowpilot/internal/repository"
+	"github.com/Yangsss13/flowpilot/internal/workerpool"
 )
 
 var ErrTaskConflict = errors.New("task cannot be executed in its current state")

@@ -7,7 +7,7 @@ import (
 
 	"gorm.io/gorm"
 
-	"minikvx-agent/internal/domain"
+	"github.com/Yangsss13/flowpilot/internal/domain"
 )
 
 var ErrStateConflict = errors.New("state conflict")

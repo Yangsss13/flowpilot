@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"minikvx-agent/internal/domain"
+	"github.com/Yangsss13/flowpilot/internal/domain"
 )
 
 var ErrTaskNotRunnable = errors.New("task is not runnable")

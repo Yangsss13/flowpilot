@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"minikvx-agent/internal/config"
-	"minikvx-agent/internal/database"
-	"minikvx-agent/internal/domain"
+	"github.com/Yangsss13/flowpilot/internal/config"
+	"github.com/Yangsss13/flowpilot/internal/database"
+	"github.com/Yangsss13/flowpilot/internal/domain"
 )
 
 func TestGormTaskRepositoryCreateRollsBackWhenStepsFail(t *testing.T) {

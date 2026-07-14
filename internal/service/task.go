@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"strings"
 
-	"minikvx-agent/internal/action"
-	"minikvx-agent/internal/domain"
-	"minikvx-agent/internal/repository"
+	"github.com/Yangsss13/flowpilot/internal/action"
+	"github.com/Yangsss13/flowpilot/internal/domain"
+	"github.com/Yangsss13/flowpilot/internal/repository"
 )
 
 var ErrInvalidInput = errors.New("invalid input")

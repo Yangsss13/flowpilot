@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"minikvx-agent/internal/domain"
+	"github.com/Yangsss13/flowpilot/internal/domain"
 )
 
 func TestStepExecutorExecute(t *testing.T) {

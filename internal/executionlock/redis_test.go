@@ -86,7 +86,7 @@ func TestRedisTaskLockerDoesNotDeleteAnotherOwner(t *testing.T) {
 	}
 
 	client.mu.Lock()
-	client.entries["minikvx:task:lock:7"] = fakeRedisEntry{value: "new-owner", expiresAt: time.Now().Add(time.Minute)}
+	client.entries["flowpilot:task:lock:7"] = fakeRedisEntry{value: "new-owner", expiresAt: time.Now().Add(time.Minute)}
 	client.mu.Unlock()
 	if err := release(context.Background()); err != nil {
 		t.Fatalf("release returned error: %v", err)
@@ -94,7 +94,7 @@ func TestRedisTaskLockerDoesNotDeleteAnotherOwner(t *testing.T) {
 
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	if got := client.entries["minikvx:task:lock:7"].value; got != "new-owner" {
+	if got := client.entries["flowpilot:task:lock:7"].value; got != "new-owner" {
 		t.Fatalf("lock owner = %q, want new-owner", got)
 	}
 }

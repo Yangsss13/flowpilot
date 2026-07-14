@@ -11,8 +11,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"minikvx-agent/internal/domain"
-	"minikvx-agent/internal/service"
+	"github.com/Yangsss13/flowpilot/internal/domain"
+	"github.com/Yangsss13/flowpilot/internal/service"
 )
 
 type fakeTaskCreator struct {

@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"minikvx-agent/internal/domain"
+	"github.com/Yangsss13/flowpilot/internal/domain"
 )
 
 type fakeTaskSource struct {

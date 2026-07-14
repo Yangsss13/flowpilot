@@ -6,8 +6,8 @@ import (
 	"errors"
 	"testing"
 
-	"minikvx-agent/internal/domain"
-	"minikvx-agent/internal/repository"
+	"github.com/Yangsss13/flowpilot/internal/domain"
+	"github.com/Yangsss13/flowpilot/internal/repository"
 )
 
 type fakeTaskRepository struct {

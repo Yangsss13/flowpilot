@@ -10,8 +10,8 @@ import (
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 
-	"minikvx-agent/internal/config"
-	"minikvx-agent/internal/domain"
+	"github.com/Yangsss13/flowpilot/internal/config"
+	"github.com/Yangsss13/flowpilot/internal/domain"
 )
 
 func OpenMySQL(cfg config.DatabaseConfig) (*gorm.DB, error) {

@@ -8,7 +8,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
-	"minikvx-agent/internal/domain"
+	"github.com/Yangsss13/flowpilot/internal/domain"
 )
 
 var ErrNotFound = errors.New("repository: not found")

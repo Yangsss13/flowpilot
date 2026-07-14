@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"minikvx-agent/internal/domain"
+	"github.com/Yangsss13/flowpilot/internal/domain"
 )
 
 func TestTransitionTaskRejectsIllegalTransitionBeforeDatabase(t *testing.T) {

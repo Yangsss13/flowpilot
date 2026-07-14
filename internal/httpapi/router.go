@@ -3,7 +3,7 @@ package httpapi
 import (
 	"github.com/gin-gonic/gin"
 
-	"minikvx-agent/internal/handler"
+	"github.com/Yangsss13/flowpilot/internal/handler"
 )
 
 func NewRouter(taskHandler *handler.TaskHandler, executionHandler *handler.ExecutionHandler) *gin.Engine {

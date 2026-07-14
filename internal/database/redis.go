@@ -7,7 +7,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"minikvx-agent/internal/config"
+	"github.com/Yangsss13/flowpilot/internal/config"
 )
 
 func OpenRedis(cfg config.RedisConfig) (*redis.Client, error) {

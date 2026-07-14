@@ -10,15 +10,15 @@ import (
 	"syscall"
 	"time"
 
-	"minikvx-agent/internal/config"
-	"minikvx-agent/internal/database"
-	"minikvx-agent/internal/executionlock"
-	"minikvx-agent/internal/executor"
-	"minikvx-agent/internal/handler"
-	"minikvx-agent/internal/httpapi"
-	"minikvx-agent/internal/repository"
-	"minikvx-agent/internal/service"
-	"minikvx-agent/internal/workerpool"
+	"github.com/Yangsss13/flowpilot/internal/config"
+	"github.com/Yangsss13/flowpilot/internal/database"
+	"github.com/Yangsss13/flowpilot/internal/executionlock"
+	"github.com/Yangsss13/flowpilot/internal/executor"
+	"github.com/Yangsss13/flowpilot/internal/handler"
+	"github.com/Yangsss13/flowpilot/internal/httpapi"
+	"github.com/Yangsss13/flowpilot/internal/repository"
+	"github.com/Yangsss13/flowpilot/internal/service"
+	"github.com/Yangsss13/flowpilot/internal/workerpool"
 )
 
 func main() {
@@ -59,7 +59,7 @@ func main() {
 	router := httpapi.NewRouter(taskHandler, executionHandler)
 
 	address := ":" + cfg.Server.Port
-	log.Printf("MiniKVX-Agent listening on %s", address)
+	log.Printf("FlowPilot listening on %s", address)
 	server := &http.Server{
 		Addr:              address,
 		Handler:           router,

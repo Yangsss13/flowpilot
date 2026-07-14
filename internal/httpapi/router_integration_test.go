@@ -11,15 +11,15 @@ import (
 	"testing"
 	"time"
 
-	"minikvx-agent/internal/config"
-	"minikvx-agent/internal/database"
-	"minikvx-agent/internal/domain"
-	"minikvx-agent/internal/executor"
-	"minikvx-agent/internal/handler"
-	"minikvx-agent/internal/httpapi"
-	"minikvx-agent/internal/repository"
-	"minikvx-agent/internal/service"
-	"minikvx-agent/internal/workerpool"
+	"github.com/Yangsss13/flowpilot/internal/config"
+	"github.com/Yangsss13/flowpilot/internal/database"
+	"github.com/Yangsss13/flowpilot/internal/domain"
+	"github.com/Yangsss13/flowpilot/internal/executor"
+	"github.com/Yangsss13/flowpilot/internal/handler"
+	"github.com/Yangsss13/flowpilot/internal/httpapi"
+	"github.com/Yangsss13/flowpilot/internal/repository"
+	"github.com/Yangsss13/flowpilot/internal/service"
+	"github.com/Yangsss13/flowpilot/internal/workerpool"
 )
 
 func TestTaskEndpointsWithMySQL(t *testing.T) {

@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"minikvx-agent/internal/config"
-	"minikvx-agent/internal/database"
-	"minikvx-agent/internal/executionlock"
+	"github.com/Yangsss13/flowpilot/internal/config"
+	"github.com/Yangsss13/flowpilot/internal/database"
+	"github.com/Yangsss13/flowpilot/internal/executionlock"
 )
 
 type blockingCountingRunner struct {
@@ -46,7 +46,7 @@ func TestRedisTaskLockerConcurrentAcquire(t *testing.T) {
 		t.Fatalf("create task locker: %v", err)
 	}
 	taskID := uint64(time.Now().UnixNano())
-	key := fmt.Sprintf("minikvx:task:lock:%d", taskID)
+	key := fmt.Sprintf("flowpilot:task:lock:%d", taskID)
 	t.Cleanup(func() { _ = client.Del(context.Background(), key).Err() })
 
 	next := &blockingCountingRunner{
