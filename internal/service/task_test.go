@@ -62,6 +62,9 @@ func TestTaskServiceCreateBuildsPendingOrderedTask(t *testing.T) {
 	if task.Status != domain.StatusPending {
 		t.Fatalf("task status = %q, want %q", task.Status, domain.StatusPending)
 	}
+	if task.TaskType != domain.TaskTypeWorkflow {
+		t.Fatalf("task type = %q, want %q", task.TaskType, domain.TaskTypeWorkflow)
+	}
 	if len(task.Steps) != 2 {
 		t.Fatalf("steps length = %d, want 2", len(task.Steps))
 	}

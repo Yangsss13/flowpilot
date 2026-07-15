@@ -7,25 +7,33 @@ import (
 
 type LogLevel string
 
+type TaskType string
+
 const (
 	LogLevelInfo  LogLevel = "INFO"
 	LogLevelWarn  LogLevel = "WARN"
 	LogLevelError LogLevel = "ERROR"
 )
 
-// Task is the workflow definition and its current overall state.
+const (
+	TaskTypeWorkflow TaskType = "workflow"
+	TaskTypeAgent    TaskType = "agent"
+)
+
+// Task is a workflow or agent definition and its current overall state.
 type Task struct {
 	ID          uint64     `gorm:"primaryKey" json:"id"`
 	Name        string     `gorm:"size:100;not null" json:"name"`
 	Description string     `gorm:"size:500;not null;default:''" json:"description"`
+	TaskType    TaskType   `gorm:"column:task_type;type:varchar(20);not null;default:'workflow';index" json:"task_type"`
 	Status      Status     `gorm:"type:varchar(20);not null;index" json:"status"`
 	Steps       []TaskStep `gorm:"foreignKey:TaskID" json:"steps,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`
 	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
-// TaskStep is one ordered action in a task. Steps within one task are run
-// sequentially in StepOrder during v1.
+// TaskStep is one action in a task. Workflow steps run sequentially in
+// StepOrder; agent steps may additionally reference dependencies.
 type TaskStep struct {
 	ID            uint64          `gorm:"primaryKey" json:"id"`
 	TaskID        uint64          `gorm:"not null;uniqueIndex:idx_task_step_order" json:"task_id"`
@@ -33,6 +41,7 @@ type TaskStep struct {
 	StepOrder     int             `gorm:"not null;uniqueIndex:idx_task_step_order" json:"step_order"`
 	ActionType    string          `gorm:"size:30;not null" json:"action_type"`
 	ActionPayload json.RawMessage `gorm:"type:json;not null" json:"action_payload"`
+	DependsOn     json.RawMessage `gorm:"type:json" json:"depends_on,omitempty"`
 	Status        Status          `gorm:"type:varchar(20);not null;index" json:"status"`
 	CreatedAt     time.Time       `json:"created_at"`
 	UpdatedAt     time.Time       `json:"updated_at"`

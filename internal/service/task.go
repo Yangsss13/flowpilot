@@ -47,6 +47,7 @@ func (s *TaskService) Create(ctx context.Context, input CreateTaskInput) (*domai
 	task := &domain.Task{
 		Name:        name,
 		Description: strings.TrimSpace(input.Description),
+		TaskType:    domain.TaskTypeWorkflow,
 		Status:      domain.StatusPending,
 		Steps:       make([]domain.TaskStep, 0, len(input.Steps)),
 	}

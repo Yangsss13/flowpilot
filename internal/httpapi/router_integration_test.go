@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Yangsss13/flowpilot/internal/agent"
 	"github.com/Yangsss13/flowpilot/internal/config"
 	"github.com/Yangsss13/flowpilot/internal/database"
 	"github.com/Yangsss13/flowpilot/internal/domain"
@@ -24,6 +25,15 @@ import (
 
 type poolPublisher struct {
 	pool *workerpool.Pool
+}
+
+type integrationAgentPlanner struct{}
+
+func (p *integrationAgentPlanner) CreatePlan(_ context.Context, _ string) (agent.Plan, error) {
+	return agent.Plan{Steps: []agent.PlanStep{
+		{ID: "search", Tool: agent.ToolRAGQuery, Input: json.RawMessage(`{"query":"refund policy"}`)},
+		{ID: "fetch", Tool: agent.ToolHTTPRequest, Input: json.RawMessage(`{"method":"GET","url":"https://example.com"}`), DependsOn: []string{"search"}},
+	}}, nil
 }
 
 func (p *poolPublisher) Publish(_ context.Context, taskID uint64) error {
@@ -60,9 +70,11 @@ func TestTaskEndpointsWithMySQL(t *testing.T) {
 		}
 	})
 	executionService := service.NewExecutionService(taskRepository, executionRepository, &poolPublisher{pool: pool})
+	agentService := service.NewAgentService(&integrationAgentPlanner{}, taskRepository)
 	router := httpapi.NewRouter(
 		handler.NewTaskHandler(taskService),
 		handler.NewExecutionHandler(executionService),
+		handler.NewAgentHandler(agentService),
 	)
 
 	name := "query-integration-" + time.Now().Format("20060102150405.000000000")
@@ -145,6 +157,26 @@ func TestTaskEndpointsWithMySQL(t *testing.T) {
 	retryResponse := performRequest(router, http.MethodPost, "/api/tasks/"+strconv.FormatUint(created.ID, 10)+"/run", nil)
 	if retryResponse.Code != http.StatusConflict {
 		t.Fatalf("successful task rerun status = %d, want 409", retryResponse.Code)
+	}
+
+	agentCreateResponse := performRequest(router, http.MethodPost, "/api/agent/tasks", []byte(`{"goal":"summarize refund policy"}`))
+	if agentCreateResponse.Code != http.StatusCreated {
+		t.Fatalf("agent create status = %d, want 201; body=%s", agentCreateResponse.Code, agentCreateResponse.Body.String())
+	}
+	var agentTask domain.Task
+	if err := json.Unmarshal(agentCreateResponse.Body.Bytes(), &agentTask); err != nil {
+		t.Fatalf("decode agent task: %v", err)
+	}
+	t.Cleanup(func() {
+		db.Where("task_id = ?", agentTask.ID).Delete(&domain.TaskStep{})
+		db.Delete(&domain.Task{}, agentTask.ID)
+	})
+	if agentTask.TaskType != domain.TaskTypeAgent || len(agentTask.Steps) != 2 || string(agentTask.Steps[1].DependsOn) != `["search"]` {
+		t.Fatalf("unexpected agent task: %#v", agentTask)
+	}
+	agentRunResponse := performRequest(router, http.MethodPost, "/api/tasks/"+strconv.FormatUint(agentTask.ID, 10)+"/run", nil)
+	if agentRunResponse.Code != http.StatusConflict {
+		t.Fatalf("agent workflow run status = %d, want 409", agentRunResponse.Code)
 	}
 
 	failureBody := []byte(`{

@@ -169,13 +169,30 @@ func TestTaskExecutorPersistsFailureAfterContextCancellation(t *testing.T) {
 
 func pendingTask() *domain.Task {
 	return &domain.Task{
-		ID:     1,
-		Status: domain.StatusPending,
+		ID:       1,
+		TaskType: domain.TaskTypeWorkflow,
+		Status:   domain.StatusPending,
 		Steps: []domain.TaskStep{
 			{ID: 11, StepOrder: 1, Status: domain.StatusPending},
 			{ID: 12, StepOrder: 2, Status: domain.StatusPending},
 			{ID: 13, StepOrder: 3, Status: domain.StatusPending},
 		},
+	}
+}
+
+func TestTaskExecutorRejectsAgentTask(t *testing.T) {
+	task := pendingTask()
+	task.TaskType = domain.TaskTypeAgent
+	states := &fakeExecutionStateStore{}
+	steps := &fakeStepRunner{}
+	executor := NewTaskExecutor(&fakeTaskSource{task: task}, states, steps)
+
+	err := executor.Execute(context.Background(), task.ID)
+	if !errors.Is(err, ErrTaskNotRunnable) {
+		t.Fatalf("Execute() error = %v, want ErrTaskNotRunnable", err)
+	}
+	if len(states.events) != 0 || len(steps.calls) != 0 {
+		t.Fatalf("agent task reached workflow execution: events=%v calls=%v", states.events, steps.calls)
 	}
 }
 

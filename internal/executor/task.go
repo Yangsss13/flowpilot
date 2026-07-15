@@ -40,6 +40,9 @@ func (e *TaskExecutor) Execute(ctx context.Context, taskID uint64) error {
 	if err != nil {
 		return fmt.Errorf("load task %d: %w", taskID, err)
 	}
+	if task.TaskType != domain.TaskTypeWorkflow {
+		return fmt.Errorf("%w: task %d has type %s", ErrTaskNotRunnable, task.ID, task.TaskType)
+	}
 	if task.Status != domain.StatusPending && task.Status != domain.StatusFailed {
 		return fmt.Errorf("%w: task %d has status %s", ErrTaskNotRunnable, task.ID, task.Status)
 	}

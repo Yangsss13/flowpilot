@@ -38,6 +38,9 @@ func (s *ExecutionService) Submit(ctx context.Context, taskID uint64) error {
 	if err != nil {
 		return fmt.Errorf("load task before submission: %w", err)
 	}
+	if task.TaskType != domain.TaskTypeWorkflow {
+		return ErrTaskConflict
+	}
 	if task.Status != domain.StatusPending && task.Status != domain.StatusFailed {
 		return ErrTaskConflict
 	}

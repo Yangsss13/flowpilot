@@ -28,7 +28,7 @@ func (f *fakeExecutionLogSource) ListLogs(_ context.Context, _ uint64) ([]domain
 }
 
 func TestExecutionServiceSubmit(t *testing.T) {
-	tasks := &fakeTaskRepository{task: &domain.Task{ID: 1, Status: domain.StatusPending}}
+	tasks := &fakeTaskRepository{task: &domain.Task{ID: 1, TaskType: domain.TaskTypeWorkflow, Status: domain.StatusPending}}
 	queue := &fakeTaskSubmitter{}
 	service := NewExecutionService(tasks, &fakeExecutionLogSource{}, queue)
 
@@ -42,7 +42,7 @@ func TestExecutionServiceSubmit(t *testing.T) {
 
 func TestExecutionServiceSubmitMapsConflict(t *testing.T) {
 	service := NewExecutionService(
-		&fakeTaskRepository{task: &domain.Task{ID: 1, Status: domain.StatusSuccess}},
+		&fakeTaskRepository{task: &domain.Task{ID: 1, TaskType: domain.TaskTypeWorkflow, Status: domain.StatusSuccess}},
 		&fakeExecutionLogSource{},
 		&fakeTaskSubmitter{},
 	)
@@ -55,7 +55,7 @@ func TestExecutionServiceSubmitMapsConflict(t *testing.T) {
 
 func TestExecutionServiceSubmitMapsUnavailableQueue(t *testing.T) {
 	service := NewExecutionService(
-		&fakeTaskRepository{task: &domain.Task{ID: 1, Status: domain.StatusPending}},
+		&fakeTaskRepository{task: &domain.Task{ID: 1, TaskType: domain.TaskTypeWorkflow, Status: domain.StatusPending}},
 		&fakeExecutionLogSource{},
 		&fakeTaskSubmitter{err: errors.New("RabbitMQ unavailable")},
 	)
@@ -63,6 +63,23 @@ func TestExecutionServiceSubmitMapsUnavailableQueue(t *testing.T) {
 	err := service.Submit(context.Background(), 1)
 	if !errors.Is(err, ErrQueueUnavailable) {
 		t.Fatalf("Submit() error = %v, want ErrQueueUnavailable", err)
+	}
+}
+
+func TestExecutionServiceRejectsAgentTask(t *testing.T) {
+	queue := &fakeTaskSubmitter{}
+	service := NewExecutionService(
+		&fakeTaskRepository{task: &domain.Task{ID: 1, TaskType: domain.TaskTypeAgent, Status: domain.StatusPending}},
+		&fakeExecutionLogSource{},
+		queue,
+	)
+
+	err := service.Submit(context.Background(), 1)
+	if !errors.Is(err, ErrTaskConflict) {
+		t.Fatalf("Submit() error = %v, want ErrTaskConflict", err)
+	}
+	if len(queue.submitted) != 0 {
+		t.Fatalf("submitted IDs = %v, want none", queue.submitted)
 	}
 }
 

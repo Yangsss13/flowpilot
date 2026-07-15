@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Yangsss13/flowpilot/internal/agent"
 	"github.com/Yangsss13/flowpilot/internal/config"
 	"github.com/Yangsss13/flowpilot/internal/database"
 	"github.com/Yangsss13/flowpilot/internal/executionlock"
@@ -51,6 +52,25 @@ func main() {
 	taskRepository := repository.NewGormTaskRepository(db)
 	executionRepository := repository.NewGormExecutionRepository(db)
 	taskService := service.NewTaskService(taskRepository)
+	var agentHandler *handler.AgentHandler
+	if cfg.AI.APIKey == "" && cfg.AI.ChatModel == "" {
+		log.Println("Agent API disabled: set AI_API_KEY and AI_CHAT_MODEL to enable it")
+	} else {
+		if cfg.AI.APIKey == "" || cfg.AI.ChatModel == "" {
+			log.Fatal("start Agent API: AI_API_KEY and AI_CHAT_MODEL must both be set")
+		}
+		provider, err := agent.NewOpenAICompatibleProvider(cfg.AI.BaseURL, cfg.AI.APIKey, cfg.AI.ChatModel, nil)
+		if err != nil {
+			log.Fatalf("start Agent API: %v", err)
+		}
+		tools := agent.DefaultToolDefinitions()
+		validator, err := agent.NewValidator(tools, agent.MaxPlanSteps)
+		if err != nil {
+			log.Fatalf("start Agent API validator: %v", err)
+		}
+		planner := agent.NewPlanner(provider, tools, validator)
+		agentHandler = handler.NewAgentHandler(service.NewAgentService(planner, taskRepository))
+	}
 	stepExecutor := executor.NewStepExecutor()
 	taskExecutor := executor.NewTaskExecutor(taskRepository, executionRepository, stepExecutor)
 	taskLock, err := executionlock.NewRedisTaskLocker(redisClient, 5*time.Minute)
@@ -74,7 +94,7 @@ func main() {
 	executionService := service.NewExecutionService(taskRepository, executionRepository, taskPublisher)
 	taskHandler := handler.NewTaskHandler(taskService)
 	executionHandler := handler.NewExecutionHandler(executionService)
-	router := httpapi.NewRouter(taskHandler, executionHandler)
+	router := httpapi.NewRouter(taskHandler, executionHandler, agentHandler)
 
 	address := ":" + cfg.Server.Port
 	log.Printf("FlowPilot listening on %s", address)

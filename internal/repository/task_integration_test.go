@@ -27,8 +27,9 @@ func TestGormTaskRepositoryCreateRollsBackWhenStepsFail(t *testing.T) {
 
 	taskName := "rollback-test-" + time.Now().Format("20060102150405.000000000")
 	task := &domain.Task{
-		Name:   taskName,
-		Status: domain.StatusPending,
+		Name:     taskName,
+		TaskType: domain.TaskTypeWorkflow,
+		Status:   domain.StatusPending,
 		Steps: []domain.TaskStep{
 			{Name: "step one", StepOrder: 1, ActionType: "sleep", ActionPayload: json.RawMessage(`{}`), Status: domain.StatusPending},
 			{Name: "duplicate order", StepOrder: 1, ActionType: "sleep", ActionPayload: json.RawMessage(`{}`), Status: domain.StatusPending},
