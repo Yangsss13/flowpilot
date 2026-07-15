@@ -203,6 +203,40 @@ func TestAgentRunnerRejectsUnsatisfiedDependency(t *testing.T) {
 	}
 }
 
+func TestAgentRunnerOnlyFinishesWhenEveryStepSucceeded(t *testing.T) {
+	tests := []struct {
+		name       string
+		lastStatus domain.Status
+		wantErr    bool
+	}{
+		{name: "pending step", lastStatus: domain.StatusPending, wantErr: true},
+		{name: "running step", lastStatus: domain.StatusRunning, wantErr: true},
+		{name: "failed step", lastStatus: domain.StatusFailed, wantErr: true},
+		{name: "all successful", lastStatus: domain.StatusSuccess},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			task := testAgentTask()
+			task.Steps[0].Status = domain.StatusSuccess
+			task.Steps[1].Status = tt.lastStatus
+			planner := &fakeAgentPlanner{decisions: []agent.Decision{{Action: agent.DecisionFinish, FinalAnswer: "done"}}}
+			states := &fakeAgentStateStore{}
+			runner := NewAgentRunner(&fakeTaskSource{task: task}, states, planner, &fakeAgentTools{}, &fakeCheckpointStore{})
+
+			err := runner.Execute(context.Background(), task.ID)
+			if tt.wantErr {
+				if !errors.Is(err, ErrAgentExecution) || states.taskStatus != domain.StatusFailed {
+					t.Fatalf("error=%v status=%s", err, states.taskStatus)
+				}
+				return
+			}
+			if err != nil || states.taskStatus != domain.StatusSuccess {
+				t.Fatalf("error=%v status=%s", err, states.taskStatus)
+			}
+		})
+	}
+}
+
 func TestAgentRunnerResumesFromSafeCheckpoint(t *testing.T) {
 	task := testAgentTask()
 	task.Status = domain.StatusRunning
@@ -253,6 +287,7 @@ func TestAgentRunnerFailsAmbiguousExecutingCheckpointWithoutReplaying(t *testing
 
 func TestAgentRunnerAdvancesStaleExecutingCheckpointAfterMySQLCommit(t *testing.T) {
 	task := testAgentTask()
+	task.Steps = task.Steps[:1]
 	task.Status = domain.StatusRunning
 	task.Steps[0].Status = domain.StatusSuccess
 	task.Steps[0].Observation = json.RawMessage(`{"step_id":"search","output":{"value":"done"}}`)
@@ -293,7 +328,7 @@ func TestAgentRunnerRejectsExecutingCheckpointWithoutPersistedResult(t *testing.
 
 func testAgentTask() *domain.Task {
 	return &domain.Task{
-		ID: 1, Description: "goal", TaskType: domain.TaskTypeAgent, Status: domain.StatusPending,
+		ID: 1, Description: "goal", TaskType: domain.TaskTypeAgent, Status: domain.StatusQueued,
 		Steps: []domain.TaskStep{
 			{ID: 11, Name: "search", ActionType: string(agent.ToolRAGQuery), ActionPayload: json.RawMessage(`{"query":"search"}`), DependsOn: json.RawMessage(`[]`), Status: domain.StatusPending},
 			{ID: 12, Name: "summarize", ActionType: string(agent.ToolRAGQuery), ActionPayload: json.RawMessage(`{"query":"summarize"}`), DependsOn: json.RawMessage(`["search"]`), Status: domain.StatusPending},

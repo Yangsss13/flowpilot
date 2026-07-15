@@ -140,6 +140,17 @@ func (s *QdrantStore) Query(ctx context.Context, vector []float32, limit int) ([
 	return results, nil
 }
 
+func (s *QdrantStore) Health(ctx context.Context) error {
+	status, _, err := s.doJSON(ctx, http.MethodGet, "/healthz", nil)
+	if err != nil {
+		return fmt.Errorf("check Qdrant health: %w", err)
+	}
+	if status < http.StatusOK || status >= http.StatusMultipleChoices {
+		return fmt.Errorf("Qdrant health returned HTTP status %d", status)
+	}
+	return nil
+}
+
 func (s *QdrantStore) ensureCollection(ctx context.Context, vectorSize int) error {
 	status, body, err := s.doJSON(ctx, http.MethodGet, s.collectionPath(), nil)
 	if err != nil {

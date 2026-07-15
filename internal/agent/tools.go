@@ -26,6 +26,41 @@ type ToolExecutor struct {
 	httpClient   *http.Client
 }
 
+// ToolRegistry builds the advertised definitions and runtime executor from
+// the same configured capabilities, so the Planner cannot select a disabled
+// tool that will only fail later during execution.
+type ToolRegistry struct {
+	definitions []ToolDefinition
+	executor    *ToolExecutor
+}
+
+func NewToolRegistry(searcher RAGSearcher, allowedHosts []string, client *http.Client) (*ToolRegistry, error) {
+	executor, err := NewToolExecutor(searcher, allowedHosts, client)
+	if err != nil {
+		return nil, err
+	}
+	available := make(map[ToolName]bool, 2)
+	available[ToolRAGQuery] = searcher != nil
+	available[ToolHTTPRequest] = len(executor.allowedHosts) != 0
+	definitions := make([]ToolDefinition, 0, len(available))
+	for _, definition := range DefaultToolDefinitions() {
+		if available[definition.Name] {
+			definitions = append(definitions, definition)
+		}
+	}
+	return &ToolRegistry{definitions: definitions, executor: executor}, nil
+}
+
+func (r *ToolRegistry) Definitions() []ToolDefinition {
+	definitions := make([]ToolDefinition, len(r.definitions))
+	copy(definitions, r.definitions)
+	return definitions
+}
+
+func (r *ToolRegistry) Execute(ctx context.Context, tool ToolName, input json.RawMessage) (json.RawMessage, error) {
+	return r.executor.Execute(ctx, tool, input)
+}
+
 func NewToolExecutor(searcher RAGSearcher, allowedHosts []string, client *http.Client) (*ToolExecutor, error) {
 	allowed := make(map[string]struct{}, len(allowedHosts))
 	for _, host := range allowedHosts {

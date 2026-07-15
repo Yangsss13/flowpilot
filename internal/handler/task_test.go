@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -18,7 +19,8 @@ import (
 type fakeTaskCreator struct {
 	input service.CreateTaskInput
 	task  *domain.Task
-	tasks []domain.Task
+	page  service.TaskListResult
+	stats service.TaskStatsResult
 	err   error
 	calls int
 }
@@ -29,9 +31,14 @@ func (f *fakeTaskCreator) Create(_ context.Context, input service.CreateTaskInpu
 	return f.task, f.err
 }
 
-func (f *fakeTaskCreator) List(_ context.Context) ([]domain.Task, error) {
+func (f *fakeTaskCreator) List(_ context.Context, _ service.ListTasksInput) (service.TaskListResult, error) {
 	f.calls++
-	return f.tasks, f.err
+	return f.page, f.err
+}
+
+func (f *fakeTaskCreator) Stats(_ context.Context) (service.TaskStatsResult, error) {
+	f.calls++
+	return f.stats, f.err
 }
 
 func (f *fakeTaskCreator) GetByID(_ context.Context, _ uint64) (*domain.Task, error) {
@@ -69,6 +76,25 @@ func TestTaskHandlerCreateRejectsMalformedJSONBeforeService(t *testing.T) {
 	}
 }
 
+func TestTaskHandlerCreateRejectsUnknownFieldsAndOversizedBody(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "unknown field", body: `{"name":"task","unknown":true,"steps":[]}`},
+		{name: "oversized body", body: `{"name":"task","description":"` + strings.Repeat("x", service.MaxTaskRequestBytes) + `","steps":[]}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			creator := &fakeTaskCreator{}
+			response := performCreateRequest(t, creator, tt.body)
+			if response.Code != http.StatusBadRequest || creator.calls != 0 {
+				t.Fatalf("status=%d calls=%d", response.Code, creator.calls)
+			}
+		})
+	}
+}
+
 func TestTaskHandlerCreateMapsServiceErrors(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -100,7 +126,7 @@ func TestTaskHandlerCreateMapsServiceErrors(t *testing.T) {
 }
 
 func TestTaskHandlerListReturnsTasks(t *testing.T) {
-	creator := &fakeTaskCreator{tasks: []domain.Task{{ID: 2, Name: "newest", Status: domain.StatusPending}}}
+	creator := &fakeTaskCreator{page: service.TaskListResult{Items: []service.TaskListItem{{ID: 2, Name: "newest", Status: domain.StatusPending}}, Total: 1, Page: 1, PageSize: 20}}
 	response := performRequest(t, creator, http.MethodGet, "/api/tasks", "")
 
 	if response.Code != http.StatusOK {
@@ -108,6 +134,14 @@ func TestTaskHandlerListReturnsTasks(t *testing.T) {
 	}
 	if creator.calls != 1 {
 		t.Fatalf("service calls = %d, want 1", creator.calls)
+	}
+}
+
+func TestTaskHandlerListRejectsInvalidPagination(t *testing.T) {
+	creator := &fakeTaskCreator{}
+	response := performRequest(t, creator, http.MethodGet, "/api/tasks?page=0", "")
+	if response.Code != http.StatusBadRequest || creator.calls != 0 {
+		t.Fatalf("status=%d calls=%d", response.Code, creator.calls)
 	}
 }
 

@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"gorm.io/gorm"
@@ -10,6 +11,8 @@ import (
 	"github.com/Yangsss13/flowpilot/internal/agent"
 	"github.com/Yangsss13/flowpilot/internal/domain"
 )
+
+var ErrIncompleteAgentSteps = errors.New("agent task has incomplete steps")
 
 func (r *GormExecutionRepository) CompleteAgentStep(
 	ctx context.Context,
@@ -68,6 +71,20 @@ func (r *GormExecutionRepository) CompleteAgentTask(
 		level = domain.LogLevelError
 	}
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if next == domain.StatusSuccess {
+			var total, successful int64
+			if err := tx.Model(&domain.TaskStep{}).Where("task_id = ?", taskID).Count(&total).Error; err != nil {
+				return fmt.Errorf("count agent steps: %w", err)
+			}
+			if err := tx.Model(&domain.TaskStep{}).
+				Where("task_id = ? AND status = ?", taskID, domain.StatusSuccess).
+				Count(&successful).Error; err != nil {
+				return fmt.Errorf("count successful agent steps: %w", err)
+			}
+			if total == 0 || successful != total {
+				return ErrIncompleteAgentSteps
+			}
+		}
 		result := tx.Model(&domain.Task{}).
 			Where("id = ? AND task_type = ? AND status = ?", taskID, domain.TaskTypeAgent, domain.StatusRunning).
 			Updates(map[string]any{"status": next, "result": resultText})

@@ -88,7 +88,7 @@ func TestTaskExecutorExecuteSuccess(t *testing.T) {
 		t.Fatalf("step calls = %v, want %v", steps.calls, wantStepCalls)
 	}
 	wantEvents := []transitionEvent{
-		{kind: "task", id: 1, current: domain.StatusPending, next: domain.StatusRunning},
+		{kind: "task", id: 1, current: domain.StatusQueued, next: domain.StatusRunning},
 		{kind: "step", id: 11, current: domain.StatusPending, next: domain.StatusRunning},
 		{kind: "step", id: 11, current: domain.StatusRunning, next: domain.StatusSuccess},
 		{kind: "step", id: 12, current: domain.StatusPending, next: domain.StatusRunning},
@@ -129,7 +129,7 @@ func TestTaskExecutorStopsAfterFirstFailedStep(t *testing.T) {
 
 func TestTaskExecutorSkipsSuccessfulStepsWhenRetryingFailedTask(t *testing.T) {
 	task := pendingTask()
-	task.Status = domain.StatusFailed
+	task.Status = domain.StatusQueued
 	task.Steps[0].Status = domain.StatusSuccess
 	task.Steps[1].Status = domain.StatusFailed
 	states := &fakeExecutionStateStore{}
@@ -171,7 +171,7 @@ func pendingTask() *domain.Task {
 	return &domain.Task{
 		ID:       1,
 		TaskType: domain.TaskTypeWorkflow,
-		Status:   domain.StatusPending,
+		Status:   domain.StatusQueued,
 		Steps: []domain.TaskStep{
 			{ID: 11, StepOrder: 1, Status: domain.StatusPending},
 			{ID: 12, StepOrder: 2, Status: domain.StatusPending},

@@ -60,7 +60,7 @@ func (r *AgentRunner) Execute(ctx context.Context, taskID uint64) error {
 	}
 	startIteration := 0
 	switch task.Status {
-	case domain.StatusPending, domain.StatusFailed:
+	case domain.StatusQueued:
 		if err := r.states.TransitionTask(ctx, task.ID, task.Status, domain.StatusRunning, domain.LogLevelInfo, "agent task started"); err != nil {
 			return fmt.Errorf("start agent task %d: %w", task.ID, err)
 		}
@@ -125,6 +125,10 @@ func (r *AgentRunner) Execute(ctx context.Context, taskID uint64) error {
 		}
 		switch decision.Action {
 		case agent.DecisionFinish:
+			if err := requireSuccessfulAgentSteps(task.Steps); err != nil {
+				_ = r.completeTask(task.ID, domain.StatusFailed, err.Error(), "agent task failed: incomplete plan")
+				return fmt.Errorf("%w: %v", ErrAgentExecution, err)
+			}
 			if err := r.completeTask(task.ID, domain.StatusSuccess, decision.FinalAnswer, "agent task succeeded"); err != nil {
 				r.failTask(task.ID, "persist agent success failed")
 				return err
@@ -193,6 +197,15 @@ func (r *AgentRunner) Execute(ctx context.Context, taskID uint64) error {
 		return err
 	}
 	return fmt.Errorf("%w: %s", ErrAgentExecution, reason)
+}
+
+func requireSuccessfulAgentSteps(steps []domain.TaskStep) error {
+	for _, step := range steps {
+		if step.Status != domain.StatusSuccess {
+			return fmt.Errorf("step %q has status %s", step.Name, step.Status)
+		}
+	}
+	return nil
 }
 
 func agentStateFromTask(task *domain.Task) (agent.AgentState, error) {

@@ -10,6 +10,10 @@ func TestValidateTransition(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "start pending task", current: StatusPending, next: StatusRunning},
+		{name: "queue pending task", current: StatusPending, next: StatusQueued},
+		{name: "start queued task", current: StatusQueued, next: StatusRunning},
+		{name: "release pending reservation", current: StatusQueued, next: StatusPending},
+		{name: "release failed reservation", current: StatusQueued, next: StatusFailed},
 		{name: "finish successfully", current: StatusRunning, next: StatusSuccess},
 		{name: "finish with failure", current: StatusRunning, next: StatusFailed},
 		{name: "retry failed task", current: StatusFailed, next: StatusRunning},

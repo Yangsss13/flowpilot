@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/Yangsss13/flowpilot/internal/domain"
 	"github.com/Yangsss13/flowpilot/internal/repository"
@@ -31,22 +32,31 @@ func NewExecutionService(tasks repository.TaskRepository, logs ExecutionLogSourc
 }
 
 func (s *ExecutionService) Submit(ctx context.Context, taskID uint64) error {
-	task, err := s.tasks.GetByID(ctx, taskID)
+	return reserveAndPublish(ctx, s.tasks, s.queue, taskID, domain.TaskTypeWorkflow)
+}
+
+func reserveAndPublish(
+	ctx context.Context,
+	tasks repository.TaskRepository,
+	queue TaskPublisher,
+	taskID uint64,
+	taskType domain.TaskType,
+) error {
+	previous, err := tasks.ReserveForQueue(ctx, taskID, taskType)
 	if errors.Is(err, repository.ErrNotFound) {
 		return ErrTaskNotFound
 	}
+	if errors.Is(err, repository.ErrStateConflict) {
+		return ErrTaskConflict
+	}
 	if err != nil {
-		return fmt.Errorf("load task before submission: %w", err)
+		return fmt.Errorf("reserve task before submission: %w", err)
 	}
-	if task.TaskType != domain.TaskTypeWorkflow {
-		return ErrTaskConflict
-	}
-	if task.Status != domain.StatusPending && task.Status != domain.StatusFailed {
-		return ErrTaskConflict
-	}
-
-	if err := s.queue.Publish(ctx, taskID); err != nil {
-		return fmt.Errorf("%w: publish task: %v", ErrQueueUnavailable, err)
+	if err := queue.Publish(ctx, taskID); err != nil {
+		releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+		releaseErr := tasks.ReleaseQueueReservation(releaseCtx, taskID, previous)
+		cancel()
+		return errors.Join(fmt.Errorf("%w: publish task: %v", ErrQueueUnavailable, err), releaseErr)
 	}
 	return nil
 }

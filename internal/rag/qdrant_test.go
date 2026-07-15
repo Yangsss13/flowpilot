@@ -97,3 +97,20 @@ func TestNewQdrantStoreValidatesConfiguration(t *testing.T) {
 		t.Fatal("constructor accepted invalid collection")
 	}
 }
+
+func TestQdrantStoreHealth(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/healthz" {
+			t.Fatalf("path = %s", request.URL.Path)
+		}
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	store, err := NewQdrantStore(server.URL, "knowledge", "", server.Client())
+	if err != nil {
+		t.Fatalf("NewQdrantStore() error = %v", err)
+	}
+	if err := store.Health(context.Background()); err != nil {
+		t.Fatalf("Health() error = %v", err)
+	}
+}

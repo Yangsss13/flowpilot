@@ -7,6 +7,7 @@ type Status string
 
 const (
 	StatusPending Status = "Pending"
+	StatusQueued  Status = "Queued"
 	StatusRunning Status = "Running"
 	StatusSuccess Status = "Success"
 	StatusFailed  Status = "Failed"
@@ -14,13 +15,20 @@ const (
 
 var allowedTransitions = map[Status]map[Status]struct{}{
 	StatusPending: {
+		StatusQueued:  {},
 		StatusRunning: {},
+	},
+	StatusQueued: {
+		StatusPending: {},
+		StatusRunning: {},
+		StatusFailed:  {},
 	},
 	StatusRunning: {
 		StatusSuccess: {},
 		StatusFailed:  {},
 	},
 	StatusFailed: {
+		StatusQueued:  {},
 		StatusRunning: {},
 	},
 	StatusSuccess: {},

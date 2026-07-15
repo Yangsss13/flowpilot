@@ -1,8 +1,11 @@
 package action
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"time"
 )
 
@@ -38,7 +41,7 @@ func Validate(actionType string, payload json.RawMessage) error {
 
 func ParseSleep(payload json.RawMessage) (SleepPayload, error) {
 	var input SleepPayload
-	if err := json.Unmarshal(payload, &input); err != nil {
+	if err := decodeStrictPayload(payload, &input); err != nil {
 		return SleepPayload{}, fmt.Errorf("decode sleep payload: %w", err)
 	}
 	duration := time.Duration(input.DurationMS) * time.Millisecond
@@ -50,7 +53,7 @@ func ParseSleep(payload json.RawMessage) (SleepPayload, error) {
 
 func ParseHTTPMock(payload json.RawMessage) (HTTPMockPayload, error) {
 	var input HTTPMockPayload
-	if err := json.Unmarshal(payload, &input); err != nil {
+	if err := decodeStrictPayload(payload, &input); err != nil {
 		return HTTPMockPayload{}, fmt.Errorf("decode http_mock payload: %w", err)
 	}
 	if input.Status < 100 || input.Status > 599 {
@@ -61,8 +64,26 @@ func ParseHTTPMock(payload json.RawMessage) (HTTPMockPayload, error) {
 
 func ParseShellMock(payload json.RawMessage) (ShellMockPayload, error) {
 	var input ShellMockPayload
-	if err := json.Unmarshal(payload, &input); err != nil {
+	if err := decodeStrictPayload(payload, &input); err != nil {
 		return ShellMockPayload{}, fmt.Errorf("decode shell_mock payload: %w", err)
 	}
+	if input.ExitCode < 0 || input.ExitCode > 255 {
+		return ShellMockPayload{}, fmt.Errorf("shell_mock exit_code must be between 0 and 255")
+	}
 	return input, nil
+}
+
+func decodeStrictPayload(payload json.RawMessage, target any) error {
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return fmt.Errorf("multiple JSON values are not allowed")
+		}
+		return err
+	}
+	return nil
 }

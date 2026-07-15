@@ -13,11 +13,14 @@ func TestValidate(t *testing.T) {
 		wantErr    bool
 	}{
 		{name: "valid sleep", actionType: "sleep", payload: `{"duration_ms":1}`},
+		{name: "sleep unknown field", actionType: "sleep", payload: `{"duration_ms":1,"extra":true}`, wantErr: true},
 		{name: "zero sleep", actionType: "sleep", payload: `{"duration_ms":0}`, wantErr: true},
 		{name: "too long sleep", actionType: "sleep", payload: `{"duration_ms":30001}`, wantErr: true},
 		{name: "valid HTTP", actionType: "http_mock", payload: `{"status":500}`},
 		{name: "invalid HTTP status", actionType: "http_mock", payload: `{"status":0}`, wantErr: true},
 		{name: "valid shell", actionType: "shell_mock", payload: `{"exit_code":1}`},
+		{name: "negative shell exit", actionType: "shell_mock", payload: `{"exit_code":-1}`, wantErr: true},
+		{name: "large shell exit", actionType: "shell_mock", payload: `{"exit_code":256}`, wantErr: true},
 		{name: "unknown action", actionType: "email_mock", payload: `{}`, wantErr: true},
 		{name: "invalid JSON", actionType: "sleep", payload: `{`, wantErr: true},
 	}

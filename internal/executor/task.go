@@ -43,13 +43,13 @@ func (e *TaskExecutor) Execute(ctx context.Context, taskID uint64) error {
 	if task.TaskType != domain.TaskTypeWorkflow {
 		return fmt.Errorf("%w: task %d has type %s", ErrTaskNotRunnable, task.ID, task.TaskType)
 	}
-	if task.Status != domain.StatusPending && task.Status != domain.StatusFailed {
+	if task.Status != domain.StatusQueued {
 		return fmt.Errorf("%w: task %d has status %s", ErrTaskNotRunnable, task.ID, task.Status)
 	}
 
 	if err := e.states.TransitionTask(
 		ctx, task.ID,
-		task.Status, domain.StatusRunning,
+		domain.StatusQueued, domain.StatusRunning,
 		domain.LogLevelInfo, "task started",
 	); err != nil {
 		return fmt.Errorf("start task %d: %w", task.ID, err)

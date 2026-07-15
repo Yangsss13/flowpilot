@@ -37,6 +37,37 @@ func TestToolExecutorRunsRAGQuery(t *testing.T) {
 	}
 }
 
+func TestToolRegistryUsesConfiguredCapabilities(t *testing.T) {
+	tests := []struct {
+		name      string
+		rag       RAGSearcher
+		hosts     []string
+		wantTools []ToolName
+	}{
+		{name: "none"},
+		{name: "rag only", rag: &fakeRAGSearcher{}, wantTools: []ToolName{ToolRAGQuery}},
+		{name: "http only", hosts: []string{"api.example.com"}, wantTools: []ToolName{ToolHTTPRequest}},
+		{name: "both", rag: &fakeRAGSearcher{}, hosts: []string{"api.example.com"}, wantTools: []ToolName{ToolRAGQuery, ToolHTTPRequest}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			registry, err := NewToolRegistry(tt.rag, tt.hosts, nil)
+			if err != nil {
+				t.Fatalf("NewToolRegistry() error = %v", err)
+			}
+			definitions := registry.Definitions()
+			if len(definitions) != len(tt.wantTools) {
+				t.Fatalf("definitions = %#v, want %v", definitions, tt.wantTools)
+			}
+			for index, name := range tt.wantTools {
+				if definitions[index].Name != name {
+					t.Fatalf("definition %d = %q, want %q", index, definitions[index].Name, name)
+				}
+			}
+		})
+	}
+}
+
 func TestToolExecutorRestrictsHTTPHostsAndRedirects(t *testing.T) {
 	target := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.URL.Path == "/redirect" {

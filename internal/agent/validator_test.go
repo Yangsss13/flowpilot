@@ -81,7 +81,10 @@ func TestParsePlanJSONIsStrict(t *testing.T) {
 
 func TestValidatorValidatesDecision(t *testing.T) {
 	validator := newTestValidator(t)
-	state := AgentState{Plan: Plan{Steps: []PlanStep{{ID: "step-1"}}}}
+	state := AgentState{
+		Plan:         Plan{Steps: []PlanStep{{ID: "step-1"}}},
+		Observations: []Observation{{StepID: "step-1", Output: json.RawMessage(`{"ok":true}`)}},
+	}
 	tests := []struct {
 		name     string
 		decision Decision
@@ -92,6 +95,8 @@ func TestValidatorValidatesDecision(t *testing.T) {
 		{name: "missing next step", decision: Decision{Action: DecisionContinue}, state: state, wantErr: true},
 		{name: "finish", decision: Decision{Action: DecisionFinish, FinalAnswer: "done"}, state: state},
 		{name: "empty answer", decision: Decision{Action: DecisionFinish}, state: state, wantErr: true},
+		{name: "finish before step succeeds", decision: Decision{Action: DecisionFinish, FinalAnswer: "done"}, state: AgentState{Plan: state.Plan}, wantErr: true},
+		{name: "finish after failed observation", decision: Decision{Action: DecisionFinish, FinalAnswer: "done"}, state: AgentState{Plan: state.Plan, Observations: []Observation{{StepID: "step-1", Error: "failed"}}}, wantErr: true},
 		{name: "replan", decision: Decision{Action: DecisionReplan, Reason: "missing data"}, state: state},
 		{name: "replan limit", decision: Decision{Action: DecisionReplan, Reason: "again"}, state: AgentState{ReplanCount: MaxReplans}, wantErr: true},
 		{name: "fail", decision: Decision{Action: DecisionFail, Reason: "tool failed"}, state: state},

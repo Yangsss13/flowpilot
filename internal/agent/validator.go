@@ -120,6 +120,11 @@ func (v *Validator) ValidateDecision(decision Decision, state AgentState) error 
 		if strings.TrimSpace(decision.FinalAnswer) == "" {
 			return fmt.Errorf("%w: finish requires final_answer", ErrInvalidDecision)
 		}
+		for _, step := range state.Plan.Steps {
+			if !hasSuccessfulObservation(state.Observations, step.ID) {
+				return fmt.Errorf("%w: finish requires successful observation for step %q", ErrInvalidDecision, step.ID)
+			}
+		}
 	case DecisionFail:
 		if strings.TrimSpace(decision.Reason) == "" {
 			return fmt.Errorf("%w: fail requires reason", ErrInvalidDecision)
@@ -128,6 +133,15 @@ func (v *Validator) ValidateDecision(decision Decision, state AgentState) error 
 		return fmt.Errorf("%w: unknown action %q", ErrInvalidDecision, decision.Action)
 	}
 	return nil
+}
+
+func hasSuccessfulObservation(observations []Observation, stepID string) bool {
+	for _, observation := range observations {
+		if observation.StepID == stepID && observation.Error == "" {
+			return true
+		}
+	}
+	return false
 }
 
 type ragQueryInput struct {

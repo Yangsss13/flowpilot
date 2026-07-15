@@ -38,6 +38,9 @@ func TestExecutionServiceSubmit(t *testing.T) {
 	if len(queue.submitted) != 1 || queue.submitted[0] != 1 {
 		t.Fatalf("submitted IDs = %v, want [1]", queue.submitted)
 	}
+	if tasks.task.Status != domain.StatusQueued {
+		t.Fatalf("task status = %s, want Queued", tasks.task.Status)
+	}
 }
 
 func TestExecutionServiceSubmitMapsConflict(t *testing.T) {
@@ -54,8 +57,9 @@ func TestExecutionServiceSubmitMapsConflict(t *testing.T) {
 }
 
 func TestExecutionServiceSubmitMapsUnavailableQueue(t *testing.T) {
+	tasks := &fakeTaskRepository{task: &domain.Task{ID: 1, TaskType: domain.TaskTypeWorkflow, Status: domain.StatusPending}}
 	service := NewExecutionService(
-		&fakeTaskRepository{task: &domain.Task{ID: 1, TaskType: domain.TaskTypeWorkflow, Status: domain.StatusPending}},
+		tasks,
 		&fakeExecutionLogSource{},
 		&fakeTaskSubmitter{err: errors.New("RabbitMQ unavailable")},
 	)
@@ -63,6 +67,9 @@ func TestExecutionServiceSubmitMapsUnavailableQueue(t *testing.T) {
 	err := service.Submit(context.Background(), 1)
 	if !errors.Is(err, ErrQueueUnavailable) {
 		t.Fatalf("Submit() error = %v, want ErrQueueUnavailable", err)
+	}
+	if !tasks.released || tasks.task.Status != domain.StatusPending {
+		t.Fatalf("reservation released=%v status=%s", tasks.released, tasks.task.Status)
 	}
 }
 

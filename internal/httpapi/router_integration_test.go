@@ -8,8 +8,12 @@ import (
 	"net/http/httptest"
 	"os"
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/gin-gonic/gin"
 
 	"github.com/Yangsss13/flowpilot/internal/agent"
 	"github.com/Yangsss13/flowpilot/internal/config"
@@ -25,6 +29,20 @@ import (
 
 type poolPublisher struct {
 	pool *workerpool.Pool
+}
+
+type blockingPublisher struct {
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+	calls   atomic.Int32
+}
+
+func (p *blockingPublisher) Publish(_ context.Context, _ uint64) error {
+	p.calls.Add(1)
+	p.once.Do(func() { close(p.started) })
+	<-p.release
+	return nil
 }
 
 type integrationAgentPlanner struct{}
@@ -76,6 +94,8 @@ func TestTaskEndpointsWithMySQL(t *testing.T) {
 		handler.NewExecutionHandler(executionService),
 		handler.NewAgentHandler(agentService, nil),
 		nil,
+		handler.NewCapabilityHandler(true, agent.DefaultToolDefinitions(), false),
+		handler.NewHealthHandler(map[string]handler.ReadinessCheck{}),
 	)
 
 	name := "query-integration-" + time.Now().Format("20060102150405.000000000")
@@ -104,15 +124,25 @@ func TestTaskEndpointsWithMySQL(t *testing.T) {
 	if listResponse.Code != http.StatusOK {
 		t.Fatalf("list status = %d, want 200", listResponse.Code)
 	}
-	var listed []map[string]json.RawMessage
+	var listed struct {
+		Items []map[string]json.RawMessage `json:"items"`
+		Total int64                        `json:"total"`
+	}
 	if err := json.Unmarshal(listResponse.Body.Bytes(), &listed); err != nil {
 		t.Fatalf("decode task list: %v", err)
 	}
-	for _, task := range listed {
+	if listed.Total < 1 {
+		t.Fatalf("list total = %d", listed.Total)
+	}
+	for _, task := range listed.Items {
 		var id uint64
 		if err := json.Unmarshal(task["id"], &id); err == nil && id == created.ID {
 			if _, hasSteps := task["steps"]; hasSteps {
 				t.Fatal("list response unexpectedly includes steps")
+			}
+			var stepCount int64
+			if err := json.Unmarshal(task["step_count"], &stepCount); err != nil || stepCount != 2 {
+				t.Fatalf("step_count = %d error=%v", stepCount, err)
 			}
 		}
 	}
@@ -151,8 +181,8 @@ func TestTaskEndpointsWithMySQL(t *testing.T) {
 	if err := json.Unmarshal(logsResponse.Body.Bytes(), &successLogs); err != nil {
 		t.Fatalf("decode success logs: %v", err)
 	}
-	if len(successLogs) != 6 {
-		t.Fatalf("success log count = %d, want 6", len(successLogs))
+	if len(successLogs) != 7 {
+		t.Fatalf("success log count = %d, want 7", len(successLogs))
 	}
 
 	retryResponse := performRequest(router, http.MethodPost, "/api/tasks/"+strconv.FormatUint(created.ID, 10)+"/run", nil)
@@ -209,6 +239,72 @@ func TestTaskEndpointsWithMySQL(t *testing.T) {
 	failed := waitForTerminalTask(t, router, failureTask.ID)
 	if failed.Status != domain.StatusFailed || failed.Steps[0].Status != domain.StatusSuccess || failed.Steps[1].Status != domain.StatusFailed || failed.Steps[2].Status != domain.StatusPending {
 		t.Fatalf("unexpected failed task state: %#v", failed)
+	}
+}
+
+func TestConcurrentRunRequestsOnlyQueueOnce(t *testing.T) {
+	if os.Getenv("FLOWPILOT_INTEGRATION") != "1" {
+		t.Skip("set FLOWPILOT_INTEGRATION=1 to run MySQL integration tests")
+	}
+	db, err := database.OpenMySQL(config.Load().Database)
+	if err != nil {
+		t.Fatalf("open MySQL: %v", err)
+	}
+	if err := database.Migrate(db); err != nil {
+		t.Fatalf("migrate MySQL: %v", err)
+	}
+	task := &domain.Task{
+		Name:     "concurrent-run-" + time.Now().Format("150405.000000000"),
+		TaskType: domain.TaskTypeWorkflow, Status: domain.StatusPending,
+		Steps: []domain.TaskStep{{Name: "wait", StepOrder: 1, ActionType: "sleep", ActionPayload: json.RawMessage(`{"duration_ms":1}`), Status: domain.StatusPending}},
+	}
+	tasks := repository.NewGormTaskRepository(db)
+	if err := tasks.Create(context.Background(), task); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	t.Cleanup(func() {
+		db.Where("task_id = ?", task.ID).Delete(&domain.ExecutionLog{})
+		db.Where("task_id = ?", task.ID).Delete(&domain.TaskStep{})
+		db.Delete(&domain.Task{}, task.ID)
+	})
+	publisher := &blockingPublisher{started: make(chan struct{}), release: make(chan struct{})}
+	execution := service.NewExecutionService(tasks, repository.NewGormExecutionRepository(db), publisher)
+	router := gin.New()
+	router.POST("/api/tasks/:id/run", handler.NewExecutionHandler(execution).Run)
+	path := "/api/tasks/" + strconv.FormatUint(task.ID, 10) + "/run"
+	statuses := make(chan int, 20)
+	go func() { statuses <- performRequest(router, http.MethodPost, path, nil).Code }()
+	select {
+	case <-publisher.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first request did not reach publisher")
+	}
+	for index := 1; index < 20; index++ {
+		go func() { statuses <- performRequest(router, http.MethodPost, path, nil).Code }()
+	}
+	deadline := time.After(3 * time.Second)
+	conflicts := 0
+	for conflicts < 19 {
+		select {
+		case status := <-statuses:
+			if status != http.StatusConflict {
+				t.Fatalf("concurrent status = %d, want 409", status)
+			}
+			conflicts++
+		case <-deadline:
+			t.Fatalf("received %d conflicts, want 19", conflicts)
+		}
+	}
+	close(publisher.release)
+	if status := <-statuses; status != http.StatusAccepted {
+		t.Fatalf("winning status = %d, want 202", status)
+	}
+	if publisher.calls.Load() != 1 {
+		t.Fatalf("publisher calls = %d, want 1", publisher.calls.Load())
+	}
+	loaded, err := tasks.GetByID(context.Background(), task.ID)
+	if err != nil || loaded.Status != domain.StatusQueued {
+		t.Fatalf("queued task status=%v error=%v", loaded.Status, err)
 	}
 }
 

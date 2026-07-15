@@ -10,8 +10,9 @@ import (
 
 func TestAgentExecutionServiceSubmitsAgentTask(t *testing.T) {
 	queue := &fakeTaskSubmitter{}
+	tasks := &fakeTaskRepository{task: &domain.Task{ID: 1, TaskType: domain.TaskTypeAgent, Status: domain.StatusPending}}
 	service := NewAgentExecutionService(
-		&fakeTaskRepository{task: &domain.Task{ID: 1, TaskType: domain.TaskTypeAgent, Status: domain.StatusPending}},
+		tasks,
 		queue,
 	)
 	if err := service.Submit(context.Background(), 1); err != nil {
@@ -19,6 +20,9 @@ func TestAgentExecutionServiceSubmitsAgentTask(t *testing.T) {
 	}
 	if len(queue.submitted) != 1 || queue.submitted[0] != 1 {
 		t.Fatalf("submitted = %v", queue.submitted)
+	}
+	if tasks.task.Status != domain.StatusQueued {
+		t.Fatalf("task status = %s, want Queued", tasks.task.Status)
 	}
 }
 

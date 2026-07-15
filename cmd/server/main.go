@@ -54,23 +54,9 @@ func main() {
 	taskRepository := repository.NewGormTaskRepository(db)
 	executionRepository := repository.NewGormExecutionRepository(db)
 	taskService := service.NewTaskService(taskRepository)
-	var planner *agent.Planner
-	if cfg.AI.ChatModel == "" {
-		log.Println("Agent API disabled: set AI_API_KEY and AI_CHAT_MODEL to enable it")
-	} else {
-		if cfg.AI.APIKey == "" {
-			log.Fatal("start Agent API: AI_API_KEY is required when AI_CHAT_MODEL is set")
-		}
-		provider, err := agent.NewOpenAICompatibleProvider(cfg.AI.BaseURL, cfg.AI.APIKey, cfg.AI.ChatModel, nil)
-		if err != nil {
-			log.Fatalf("start Agent API: %v", err)
-		}
-		tools := agent.DefaultToolDefinitions()
-		validator, err := agent.NewValidator(tools, agent.MaxPlanSteps)
-		if err != nil {
-			log.Fatalf("start Agent API validator: %v", err)
-		}
-		planner = agent.NewPlanner(provider, tools, validator)
+	qdrantStore, err := rag.NewQdrantStore(cfg.Qdrant.URL, cfg.Qdrant.Collection, cfg.Qdrant.APIKey, nil)
+	if err != nil {
+		log.Fatalf("configure Qdrant: %v", err)
 	}
 	var ragService *rag.Service
 	var knowledgeHandler *handler.KnowledgeHandler
@@ -84,12 +70,32 @@ func main() {
 		if err != nil {
 			log.Fatalf("start Knowledge API embedder: %v", err)
 		}
-		vectorStore, err := rag.NewQdrantStore(cfg.Qdrant.URL, cfg.Qdrant.Collection, cfg.Qdrant.APIKey, nil)
-		if err != nil {
-			log.Fatalf("start Knowledge API vector store: %v", err)
-		}
-		ragService = rag.NewService(embedder, vectorStore)
+		ragService = rag.NewService(embedder, qdrantStore)
 		knowledgeHandler = handler.NewKnowledgeHandler(ragService)
+	}
+	toolRegistry, err := agent.NewToolRegistry(ragService, cfg.AI.HTTPAllowedHosts, nil)
+	if err != nil {
+		log.Fatalf("configure Agent tools: %v", err)
+	}
+	toolDefinitions := toolRegistry.Definitions()
+	var planner *agent.Planner
+	if cfg.AI.ChatModel == "" {
+		log.Println("Agent API disabled: set AI_API_KEY and AI_CHAT_MODEL to enable it")
+	} else if len(toolDefinitions) == 0 {
+		log.Println("Agent API disabled: configure RAG or at least one HTTP_TOOL_ALLOWED_HOSTS entry")
+	} else {
+		if cfg.AI.APIKey == "" {
+			log.Fatal("start Agent API: AI_API_KEY is required when AI_CHAT_MODEL is set")
+		}
+		provider, err := agent.NewOpenAICompatibleProvider(cfg.AI.BaseURL, cfg.AI.APIKey, cfg.AI.ChatModel, nil)
+		if err != nil {
+			log.Fatalf("start Agent API: %v", err)
+		}
+		validator, err := agent.NewValidator(toolDefinitions, agent.MaxPlanSteps)
+		if err != nil {
+			log.Fatalf("start Agent API validator: %v", err)
+		}
+		planner = agent.NewPlanner(provider, toolDefinitions, validator)
 	}
 	stepExecutor := executor.NewStepExecutor()
 	taskExecutor := executor.NewTaskExecutor(taskRepository, executionRepository, stepExecutor)
@@ -105,11 +111,7 @@ func main() {
 				log.Printf("close Agent checkpoint store: %v", err)
 			}
 		}()
-		toolExecutor, err := agent.NewToolExecutor(ragService, cfg.AI.HTTPAllowedHosts, nil)
-		if err != nil {
-			log.Fatalf("start Agent tools: %v", err)
-		}
-		agentRunner = executor.NewAgentRunner(taskRepository, executionRepository, planner, toolExecutor, checkpointStore)
+		agentRunner = executor.NewAgentRunner(taskRepository, executionRepository, planner, toolRegistry, checkpointStore)
 		agentHandler = handler.NewAgentHandler(
 			service.NewAgentService(planner, taskRepository),
 			service.NewAgentExecutionService(taskRepository, taskPublisher),
@@ -137,7 +139,40 @@ func main() {
 	executionService := service.NewExecutionService(taskRepository, executionRepository, taskPublisher)
 	taskHandler := handler.NewTaskHandler(taskService)
 	executionHandler := handler.NewExecutionHandler(executionService)
-	router := httpapi.NewRouter(taskHandler, executionHandler, agentHandler, knowledgeHandler)
+	capabilityHandler := handler.NewCapabilityHandler(planner != nil, toolDefinitions, knowledgeHandler != nil)
+	sqlDB, err := db.DB()
+	if err != nil {
+		log.Fatalf("get MySQL pool for readiness: %v", err)
+	}
+	readinessChecks := map[string]handler.ReadinessCheck{
+		"mysql": func(ctx context.Context) error { return sqlDB.PingContext(ctx) },
+		"redis": func(ctx context.Context) error { return redisClient.Ping(ctx).Err() },
+		"rabbitmq": func(context.Context) error {
+			if rabbitConnection.IsClosed() {
+				return errors.New("RabbitMQ connection is closed")
+			}
+			return nil
+		},
+		"qdrant": qdrantStore.Health,
+	}
+	if cfg.AI.ChatModel != "" {
+		readinessChecks["agent"] = func(context.Context) error {
+			if planner == nil {
+				return errors.New("Agent is not configured with an executable tool")
+			}
+			return nil
+		}
+	}
+	if cfg.AI.EmbeddingModel != "" {
+		readinessChecks["knowledge"] = func(context.Context) error {
+			if ragService == nil {
+				return errors.New("knowledge service is not configured")
+			}
+			return nil
+		}
+	}
+	healthHandler := handler.NewHealthHandler(readinessChecks)
+	router := httpapi.NewRouter(taskHandler, executionHandler, agentHandler, knowledgeHandler, capabilityHandler, healthHandler)
 
 	address := ":" + cfg.Server.Port
 	log.Printf("FlowPilot listening on %s", address)

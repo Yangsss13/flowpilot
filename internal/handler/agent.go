@@ -55,7 +55,7 @@ func (h *AgentHandler) Run(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
 		return
 	}
-	c.JSON(http.StatusAccepted, gin.H{"task_id": taskID, "status": "accepted"})
+	c.JSON(http.StatusAccepted, gin.H{"task_id": taskID, "status": "queued"})
 }
 
 func (h *AgentHandler) Create(c *gin.Context) {

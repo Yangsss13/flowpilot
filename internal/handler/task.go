@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 
@@ -14,7 +16,8 @@ import (
 
 type TaskApplication interface {
 	Create(ctx context.Context, input service.CreateTaskInput) (*domain.Task, error)
-	List(ctx context.Context) ([]domain.Task, error)
+	List(ctx context.Context, input service.ListTasksInput) (service.TaskListResult, error)
+	Stats(ctx context.Context) (service.TaskStatsResult, error)
 	GetByID(ctx context.Context, id uint64) (*domain.Task, error)
 }
 
@@ -39,12 +42,38 @@ func NewTaskHandler(service TaskApplication) *TaskHandler {
 }
 
 func (h *TaskHandler) List(c *gin.Context) {
-	tasks, err := h.service.List(c.Request.Context())
+	page, err := optionalPositiveInt(c.Query("page"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "page must be a positive integer"})
+		return
+	}
+	pageSize, err := optionalPositiveInt(c.Query("page_size"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "page_size must be a positive integer"})
+		return
+	}
+	result, err := h.service.List(c.Request.Context(), service.ListTasksInput{
+		Page: page, PageSize: pageSize, TaskType: c.Query("task_type"),
+		Status: c.Query("status"), Query: c.Query("query"),
+	})
+	if errors.Is(err, service.ErrInvalidInput) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
 		return
 	}
-	c.JSON(http.StatusOK, tasks)
+	c.JSON(http.StatusOK, result)
+}
+
+func (h *TaskHandler) Stats(c *gin.Context) {
+	stats, err := h.service.Stats(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+		return
+	}
+	c.JSON(http.StatusOK, stats)
 }
 
 func (h *TaskHandler) GetByID(c *gin.Context) {
@@ -67,7 +96,14 @@ func (h *TaskHandler) GetByID(c *gin.Context) {
 
 func (h *TaskHandler) Create(c *gin.Context) {
 	var request createTaskRequest
-	if err := c.ShouldBindJSON(&request); err != nil {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, service.MaxTaskRequestBytes)
+	decoder := json.NewDecoder(c.Request.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid JSON request"})
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid JSON request"})
 		return
 	}
@@ -96,4 +132,15 @@ func (h *TaskHandler) Create(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, task)
+}
+
+func optionalPositiveInt(value string) (int, error) {
+	if value == "" {
+		return 0, nil
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 {
+		return 0, errors.New("not a positive integer")
+	}
+	return parsed, nil
 }
