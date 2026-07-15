@@ -1,4 +1,4 @@
-import type { ExecutionLog, ImportResult, RunResponse, SearchResponse, Task } from './types'
+import type { CapabilitiesResponse, ExecutionLog, HealthResponse, ImportResult, ListTasksParams, ReadinessResponse, RunResponse, SearchResponse, Task, TaskListResponse, TaskStatsResponse } from './types'
 
 export type ApiErrorKind = 'offline' | 'unavailable' | 'not-found' | 'validation' | 'conflict' | 'unknown'
 
@@ -22,10 +22,10 @@ function classify(status: number): ApiErrorKind {
   return 'unknown'
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function request<T>(path: string, init?: RequestInit, acceptedStatuses: number[] = []): Promise<T> {
   try {
     const response = await fetch(path, { ...init, headers: { Accept: 'application/json', ...init?.headers } })
-    if (!response.ok) {
+    if (!response.ok && !acceptedStatuses.includes(response.status)) {
       throw new ApiError(friendlyMessages[response.status] ?? '请求失败，请稍后重试。', response.status, classify(response.status))
     }
     return await response.json() as T
@@ -36,14 +36,25 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  listTasks: async () => {
-    const tasks = await request<Task[]>('/api/tasks')
-    return Promise.all(tasks.map(async task => {
-      try { return await request<Task>(`/api/tasks/${task.id}`) } catch { return task }
-    }))
+  checkBackend: () => request<HealthResponse>('/health'),
+  checkReadiness: () => request<ReadinessResponse>('/ready', undefined, [503]),
+  getCapabilities: () => request<CapabilitiesResponse>('/api/capabilities'),
+  getTaskStats: () => request<TaskStatsResponse>('/api/tasks/stats'),
+  listTasks: (params: ListTasksParams = {}) => {
+    const query = new URLSearchParams()
+    if (params.page) query.set('page', String(params.page))
+    if (params.pageSize) query.set('page_size', String(params.pageSize))
+    if (params.taskType) query.set('task_type', params.taskType)
+    if (params.status) query.set('status', params.status)
+    if (params.query?.trim()) query.set('query', params.query.trim())
+    const suffix = query.size ? `?${query.toString()}` : ''
+    return request<TaskListResponse>(`/api/tasks${suffix}`)
   },
   getTask: (id: number) => request<Task>(`/api/tasks/${id}`),
   getLogs: (id: number) => request<ExecutionLog[]>(`/api/tasks/${id}/logs`),
+  createWorkflow: (input: { name: string; description: string; steps: Array<{ name: string; action_type: string; action_payload: Record<string, number> }> }) => request<Task>('/api/tasks', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input),
+  }),
   createAgent: (input: { goal: string; name?: string }) => request<Task>('/api/agent/tasks', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input),
   }),

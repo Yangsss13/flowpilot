@@ -1,5 +1,6 @@
-export type Status = 'Pending' | 'Running' | 'Success' | 'Failed'
+export type Status = 'Pending' | 'Queued' | 'Running' | 'Success' | 'Failed'
 export type TaskType = 'workflow' | 'agent'
+export type BackendConnection = 'checking' | 'online' | 'degraded' | 'offline'
 
 export interface TaskStep {
   id: number
@@ -23,9 +24,44 @@ export interface Task {
   status: Status
   result?: string
   replan_count?: number
+  step_count?: number
   steps?: TaskStep[]
   created_at: string
   updated_at: string
+}
+
+export interface TaskListResponse {
+  items: Task[]
+  total: number
+  page: number
+  page_size: number
+}
+
+export interface TaskStatsResponse {
+  total: number
+  by_status: Partial<Record<Status, number>>
+  by_type: Partial<Record<TaskType, number>>
+}
+
+export interface ListTasksParams {
+  page?: number
+  pageSize?: number
+  taskType?: TaskType
+  status?: Status
+  query?: string
+}
+
+export interface HealthResponse { status: 'ok' }
+export interface ReadinessResponse {
+  status: 'ready' | 'not_ready'
+  checks: Record<string, 'ok' | 'unavailable'>
+}
+
+export interface CapabilityTool { name: 'rag_query' | 'http_request'; description: string }
+export interface CapabilitiesResponse {
+  agent_enabled: boolean
+  tools: CapabilityTool[]
+  knowledge_enabled: boolean
 }
 
 export interface ExecutionLog {
@@ -52,4 +88,4 @@ export interface SearchResult {
 }
 
 export interface SearchResponse { results: SearchResult[] }
-export interface RunResponse { task_id: number; status: 'accepted' }
+export interface RunResponse { task_id: number; status: 'queued' }

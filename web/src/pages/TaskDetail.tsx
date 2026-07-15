@@ -1,13 +1,14 @@
 import { AlertTriangle, ArrowLeft, Braces, Clock3, FileText, LoaderCircle, Play, RefreshCw, RotateCcw, TerminalSquare, Wrench } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useLocation, useParams } from 'react-router-dom'
 import { ApiError, api } from '../api'
 import { ErrorState, LoadingState, Panel, StatusBadge, TypeBadge } from '../components'
 import { formatDate, parseArray, pretty } from '../hooks'
 import type { ExecutionLog, Task } from '../types'
 
 export default function TaskDetail() {
-  const id = Number(useParams().id); const [task, setTask] = useState<Task | null>(null); const [logs, setLogs] = useState<ExecutionLog[]>([]); const [loading, setLoading] = useState(true); const [running, setRunning] = useState(false); const [submitted, setSubmitted] = useState(false); const [error, setError] = useState<string | null>(null); const [updated, setUpdated] = useState<Date | null>(null)
+  const location = useLocation()
+  const id = Number(useParams().id); const [task, setTask] = useState<Task | null>(null); const [logs, setLogs] = useState<ExecutionLog[]>([]); const [loading, setLoading] = useState(true); const [running, setRunning] = useState(false); const [submitted, setSubmitted] = useState(Boolean((location.state as { submitted?: boolean } | null)?.submitted)); const [error, setError] = useState<string | null>(null); const [updated, setUpdated] = useState<Date | null>(null)
   const load = useCallback(async (quiet = false) => { if (!Number.isInteger(id) || id < 1) { setError('任务 ID 无效。'); setLoading(false); return }
     if (!quiet) setLoading(true)
     try { const [nextTask, nextLogs] = await Promise.all([api.getTask(id), api.getLogs(id)]); setTask(nextTask); setLogs(nextLogs); setError(null); setUpdated(new Date()) }
@@ -15,13 +16,14 @@ export default function TaskDetail() {
     finally { if (!quiet) setLoading(false) }
   }, [id])
   useEffect(() => { const timer = window.setTimeout(() => void load(), 0); return () => window.clearTimeout(timer) }, [load])
-  useEffect(() => { if (task?.status !== 'Running' && !(submitted && task?.status === 'Pending')) return; const timer = window.setInterval(() => void load(true), 2000); return () => window.clearInterval(timer) }, [task?.status, submitted, load])
+  const activelyExecuting = task?.status === 'Queued' || task?.status === 'Running' || (submitted && task?.status === 'Pending')
+  useEffect(() => { if (!activelyExecuting) return; const timer = window.setInterval(() => void load(true), 2000); return () => window.clearInterval(timer) }, [activelyExecuting, load])
   async function run() { if (!task) return; setRunning(true); setError(null); try { await api.runTask(task); setSubmitted(true); await load(true) } catch (err) { setError((err as ApiError).message) } finally { setRunning(false) } }
   if (loading) return <LoadingState label="正在恢复任务现场" />
   if (error && !task) return <><Link className="back-link" to="/tasks"><ArrowLeft size={15} />返回任务中心</Link><ErrorState message={error} onRetry={() => void load()} /></>
   if (!task) return null
-  return <><div className="detail-heading"><div><Link className="back-link" to="/tasks"><ArrowLeft size={15} />任务中心</Link><div className="title-row"><h1>{task.name}</h1><StatusBadge status={task.status} /></div><p>{task.description || '这个任务没有目标描述。'}</p><div className="detail-meta"><TypeBadge type={task.task_type} /><span>#{task.id}</span><span><Clock3 size={13} />{formatDate(task.created_at)}</span>{(task.status === 'Running' || submitted) && <span className="polling"><span className="live-dot" />每 2 秒自动更新</span>}</div></div>
-    <div className="detail-actions"><button className="button button-secondary" onClick={() => void load()}><RefreshCw size={16} />刷新</button>{task.status !== 'Success' && task.status !== 'Running' && <button className="button button-primary" onClick={run} disabled={running}>{running ? <LoaderCircle className="spin" size={16} /> : task.status === 'Failed' ? <RotateCcw size={16} /> : <Play size={16} />}{task.status === 'Failed' ? '重新运行' : '运行任务'}</button>}</div></div>
+  return <><div className="detail-heading"><div><Link className="back-link" to="/tasks"><ArrowLeft size={15} />任务中心</Link><div className="title-row"><h1>{task.name}</h1><StatusBadge status={task.status} /></div><p>{task.description || '这个任务没有目标描述。'}</p><div className="detail-meta"><TypeBadge type={task.task_type} /><span>#{task.id}</span><span><Clock3 size={13} />{formatDate(task.created_at)}</span>{activelyExecuting && <span className="polling"><span className="live-dot" />{task.status === 'Queued' ? '已进入队列，自动更新' : '每 2 秒自动更新'}</span>}</div></div>
+    <div className="detail-actions"><button className="button button-secondary" onClick={() => void load()}><RefreshCw size={16} />刷新</button>{(task.status === 'Pending' || task.status === 'Failed') && <button className="button button-primary" onClick={run} disabled={running}>{running ? <LoaderCircle className="spin" size={16} /> : task.status === 'Failed' ? <RotateCcw size={16} /> : <Play size={16} />}{task.status === 'Failed' ? '重新运行' : '运行任务'}</button>}</div></div>
     {error && <div className="inline-error"><AlertTriangle size={16} />{error}</div>}
     <div className="summary-strip"><div><span>当前状态</span><strong>{task.status}</strong></div><div><span>执行步骤</span><strong>{task.steps?.length ?? 0}</strong></div><div><span>Replan 次数</span><strong>{task.replan_count ?? 0}<small> / 2</small></strong></div><div><span>最后同步</span><strong>{updated?.toLocaleTimeString('zh-CN', { hour12: false }) ?? '—'}</strong></div></div>
     <div className="detail-grid"><div className="detail-main"><Panel><div className="panel-heading"><div><span className="eyebrow">EXECUTION PLAN</span><h2>步骤时间线</h2></div><span className="muted">按计划顺序</span></div>
