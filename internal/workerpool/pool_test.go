@@ -125,6 +125,48 @@ type recordingRunner struct {
 	executed []uint64
 }
 
+type errorRunner struct {
+	err error
+}
+
+func (r *errorRunner) Execute(_ context.Context, _ uint64) error {
+	return r.err
+}
+
+func TestPoolExecuteReturnsRunnerResult(t *testing.T) {
+	wantErr := errors.New("task failed")
+	pool, err := New(context.Background(), &errorRunner{err: wantErr}, 1, 1)
+	if err != nil {
+		t.Fatalf("New() returned error: %v", err)
+	}
+	defer stopPool(t, pool)
+
+	if err := pool.Execute(context.Background(), 1); !errors.Is(err, wantErr) {
+		t.Fatalf("Execute() error = %v, want %v", err, wantErr)
+	}
+}
+
+func TestPoolExecutePropagatesJobCancellation(t *testing.T) {
+	runner := &blockingRunner{
+		started: make(chan uint64, 1),
+		release: make(chan struct{}),
+	}
+	pool, err := New(context.Background(), runner, 1, 1)
+	if err != nil {
+		t.Fatalf("New() returned error: %v", err)
+	}
+	defer stopPool(t, pool)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() { result <- pool.Execute(ctx, 1) }()
+	waitForStarts(t, runner.started, 1)
+	cancel()
+	if err := <-result; !errors.Is(err, context.Canceled) {
+		t.Fatalf("Execute() error = %v, want context canceled", err)
+	}
+}
+
 func (r *recordingRunner) Execute(_ context.Context, taskID uint64) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

@@ -31,8 +31,8 @@ func (r *blockingCountingRunner) Execute(_ context.Context, _ uint64) error {
 }
 
 func TestRedisTaskLockerConcurrentAcquire(t *testing.T) {
-	if os.Getenv("MINIKVX_INTEGRATION") != "1" {
-		t.Skip("set MINIKVX_INTEGRATION=1 to run Redis integration tests")
+	if os.Getenv("FLOWPILOT_INTEGRATION") != "1" {
+		t.Skip("set FLOWPILOT_INTEGRATION=1 to run Redis integration tests")
 	}
 
 	client, err := database.OpenRedis(config.Load().Redis)

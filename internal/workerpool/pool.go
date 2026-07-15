@@ -15,9 +15,15 @@ type TaskRunner interface {
 	Execute(ctx context.Context, taskID uint64) error
 }
 
+type job struct {
+	taskID uint64
+	ctx    context.Context
+	result chan error
+}
+
 type Pool struct {
 	runner TaskRunner
-	jobs   chan uint64
+	jobs   chan job
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -40,7 +46,7 @@ func New(parent context.Context, runner TaskRunner, workerCount, queueSize int) 
 	ctx, cancel := context.WithCancel(parent)
 	pool := &Pool{
 		runner: runner,
-		jobs:   make(chan uint64, queueSize),
+		jobs:   make(chan job, queueSize),
 		ctx:    ctx,
 		cancel: cancel,
 		done:   make(chan struct{}),
@@ -64,6 +70,26 @@ func New(parent context.Context, runner TaskRunner, workerCount, queueSize int) 
 }
 
 func (p *Pool) Submit(taskID uint64) error {
+	return p.enqueue(job{taskID: taskID})
+}
+
+func (p *Pool) Execute(ctx context.Context, taskID uint64) error {
+	result := make(chan error, 1)
+	if err := p.enqueue(job{taskID: taskID, ctx: ctx, result: result}); err != nil {
+		return err
+	}
+
+	select {
+	case err := <-result:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-p.ctx.Done():
+		return ErrClosed
+	}
+}
+
+func (p *Pool) enqueue(next job) error {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	if p.stopped {
@@ -71,7 +97,7 @@ func (p *Pool) Submit(taskID uint64) error {
 	}
 
 	select {
-	case p.jobs <- taskID:
+	case p.jobs <- next:
 		return nil
 	default:
 		return ErrQueueFull
@@ -105,15 +131,29 @@ func (p *Pool) runWorker(workerID int) {
 		select {
 		case <-p.ctx.Done():
 			return
-		case taskID, ok := <-p.jobs:
+		case next, ok := <-p.jobs:
 			if !ok {
 				return
 			}
 			if p.ctx.Err() != nil {
 				return
 			}
-			if err := p.runner.Execute(p.ctx, taskID); err != nil {
-				log.Printf("worker %d execute task %d: %v", workerID, taskID, err)
+			runCtx := p.ctx
+			cancel := func() {}
+			stopPoolCancellation := func() bool { return false }
+			if next.ctx != nil {
+				runCtx, cancel = context.WithCancel(next.ctx)
+				stopPoolCancellation = context.AfterFunc(p.ctx, cancel)
+			}
+			err := p.runner.Execute(runCtx, next.taskID)
+			stopPoolCancellation()
+			cancel()
+			if next.result != nil {
+				next.result <- err
+				continue
+			}
+			if err != nil {
+				log.Printf("worker %d execute task %d: %v", workerID, next.taskID, err)
 			}
 		}
 	}

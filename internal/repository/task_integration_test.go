@@ -13,8 +13,8 @@ import (
 )
 
 func TestGormTaskRepositoryCreateRollsBackWhenStepsFail(t *testing.T) {
-	if os.Getenv("MINIKVX_INTEGRATION") != "1" {
-		t.Skip("set MINIKVX_INTEGRATION=1 to run MySQL integration tests")
+	if os.Getenv("FLOWPILOT_INTEGRATION") != "1" {
+		t.Skip("set FLOWPILOT_INTEGRATION=1 to run MySQL integration tests")
 	}
 
 	db, err := database.OpenMySQL(config.Load().Database)

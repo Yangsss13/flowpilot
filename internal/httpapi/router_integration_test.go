@@ -22,9 +22,17 @@ import (
 	"github.com/Yangsss13/flowpilot/internal/workerpool"
 )
 
+type poolPublisher struct {
+	pool *workerpool.Pool
+}
+
+func (p *poolPublisher) Publish(_ context.Context, taskID uint64) error {
+	return p.pool.Submit(taskID)
+}
+
 func TestTaskEndpointsWithMySQL(t *testing.T) {
-	if os.Getenv("MINIKVX_INTEGRATION") != "1" {
-		t.Skip("set MINIKVX_INTEGRATION=1 to run MySQL integration tests")
+	if os.Getenv("FLOWPILOT_INTEGRATION") != "1" {
+		t.Skip("set FLOWPILOT_INTEGRATION=1 to run MySQL integration tests")
 	}
 
 	db, err := database.OpenMySQL(config.Load().Database)
@@ -51,7 +59,7 @@ func TestTaskEndpointsWithMySQL(t *testing.T) {
 			t.Errorf("stop worker pool: %v", err)
 		}
 	})
-	executionService := service.NewExecutionService(taskRepository, executionRepository, pool)
+	executionService := service.NewExecutionService(taskRepository, executionRepository, &poolPublisher{pool: pool})
 	router := httpapi.NewRouter(
 		handler.NewTaskHandler(taskService),
 		handler.NewExecutionHandler(executionService),

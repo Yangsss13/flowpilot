@@ -5,6 +5,7 @@ import "os"
 type Config struct {
 	Database DatabaseConfig
 	Redis    RedisConfig
+	RabbitMQ RabbitMQConfig
 	Server   ServerConfig
 }
 
@@ -24,6 +25,10 @@ type RedisConfig struct {
 	Addr string
 }
 
+type RabbitMQConfig struct {
+	URL string
+}
+
 func Load() Config {
 	return Config{
 		Database: DatabaseConfig{
@@ -35,6 +40,9 @@ func Load() Config {
 		},
 		Redis: RedisConfig{
 			Addr: envOrDefault("REDIS_ADDR", "127.0.0.1:6379"),
+		},
+		RabbitMQ: RabbitMQConfig{
+			URL: envOrDefault("RABBITMQ_URL", "amqp://guest:guest@127.0.0.1:5672/"),
 		},
 		Server: ServerConfig{
 			Port: envOrDefault("APP_PORT", "8080"),

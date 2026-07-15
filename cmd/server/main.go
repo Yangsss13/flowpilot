@@ -18,6 +18,7 @@ import (
 	"github.com/Yangsss13/flowpilot/internal/httpapi"
 	"github.com/Yangsss13/flowpilot/internal/repository"
 	"github.com/Yangsss13/flowpilot/internal/service"
+	"github.com/Yangsss13/flowpilot/internal/taskqueue"
 	"github.com/Yangsss13/flowpilot/internal/workerpool"
 )
 
@@ -36,6 +37,16 @@ func main() {
 		log.Fatalf("start server: %v", err)
 	}
 	defer redisClient.Close()
+	rabbitConnection, err := database.OpenRabbitMQ(cfg.RabbitMQ)
+	if err != nil {
+		log.Fatalf("start server: %v", err)
+	}
+	defer rabbitConnection.Close()
+	taskPublisher, err := taskqueue.NewRabbitPublisher(rabbitConnection)
+	if err != nil {
+		log.Fatalf("start RabbitMQ publisher: %v", err)
+	}
+	defer taskPublisher.Close()
 
 	taskRepository := repository.NewGormTaskRepository(db)
 	executionRepository := repository.NewGormExecutionRepository(db)
@@ -53,7 +64,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("start worker pool: %v", err)
 	}
-	executionService := service.NewExecutionService(taskRepository, executionRepository, pool)
+	consumer, err := taskqueue.NewConsumer(rabbitConnection, taskPublisher, pool, 3)
+	if err != nil {
+		log.Fatalf("create RabbitMQ consumer: %v", err)
+	}
+	if err := consumer.Start(context.Background(), 4); err != nil {
+		log.Fatalf("start RabbitMQ consumer: %v", err)
+	}
+	executionService := service.NewExecutionService(taskRepository, executionRepository, taskPublisher)
 	taskHandler := handler.NewTaskHandler(taskService)
 	executionHandler := handler.NewExecutionHandler(executionService)
 	router := httpapi.NewRouter(taskHandler, executionHandler)
@@ -80,12 +98,19 @@ func main() {
 		stopSignals()
 	}
 
-	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancelShutdown()
-	if err := server.Shutdown(shutdownCtx); err != nil {
+	httpShutdownCtx, cancelHTTPShutdown := context.WithTimeout(context.Background(), 5*time.Second)
+	if err := server.Shutdown(httpShutdownCtx); err != nil {
 		log.Printf("shutdown HTTP server: %v", err)
 	}
-	if err := pool.Stop(shutdownCtx); err != nil {
+	cancelHTTPShutdown()
+	consumerShutdownCtx, cancelConsumerShutdown := context.WithTimeout(context.Background(), 5*time.Second)
+	if err := consumer.Stop(consumerShutdownCtx); err != nil {
+		log.Printf("shutdown RabbitMQ consumer: %v", err)
+	}
+	cancelConsumerShutdown()
+	poolShutdownCtx, cancelPoolShutdown := context.WithTimeout(context.Background(), 5*time.Second)
+	if err := pool.Stop(poolShutdownCtx); err != nil {
 		log.Printf("shutdown worker pool: %v", err)
 	}
+	cancelPoolShutdown()
 }

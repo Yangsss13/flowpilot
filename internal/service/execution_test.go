@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/Yangsss13/flowpilot/internal/domain"
-	"github.com/Yangsss13/flowpilot/internal/workerpool"
 )
 
 type fakeTaskSubmitter struct {
@@ -14,7 +13,7 @@ type fakeTaskSubmitter struct {
 	err       error
 }
 
-func (f *fakeTaskSubmitter) Submit(taskID uint64) error {
+func (f *fakeTaskSubmitter) Publish(_ context.Context, taskID uint64) error {
 	f.submitted = append(f.submitted, taskID)
 	return f.err
 }
@@ -54,11 +53,11 @@ func TestExecutionServiceSubmitMapsConflict(t *testing.T) {
 	}
 }
 
-func TestExecutionServiceSubmitMapsFullQueue(t *testing.T) {
+func TestExecutionServiceSubmitMapsUnavailableQueue(t *testing.T) {
 	service := NewExecutionService(
 		&fakeTaskRepository{task: &domain.Task{ID: 1, Status: domain.StatusPending}},
 		&fakeExecutionLogSource{},
-		&fakeTaskSubmitter{err: workerpool.ErrQueueFull},
+		&fakeTaskSubmitter{err: errors.New("RabbitMQ unavailable")},
 	)
 
 	err := service.Submit(context.Background(), 1)

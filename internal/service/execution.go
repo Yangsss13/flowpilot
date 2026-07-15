@@ -7,14 +7,13 @@ import (
 
 	"github.com/Yangsss13/flowpilot/internal/domain"
 	"github.com/Yangsss13/flowpilot/internal/repository"
-	"github.com/Yangsss13/flowpilot/internal/workerpool"
 )
 
 var ErrTaskConflict = errors.New("task cannot be executed in its current state")
 var ErrQueueUnavailable = errors.New("task queue is unavailable")
 
-type TaskSubmitter interface {
-	Submit(taskID uint64) error
+type TaskPublisher interface {
+	Publish(ctx context.Context, taskID uint64) error
 }
 
 type ExecutionLogSource interface {
@@ -24,10 +23,10 @@ type ExecutionLogSource interface {
 type ExecutionService struct {
 	tasks repository.TaskRepository
 	logs  ExecutionLogSource
-	queue TaskSubmitter
+	queue TaskPublisher
 }
 
-func NewExecutionService(tasks repository.TaskRepository, logs ExecutionLogSource, queue TaskSubmitter) *ExecutionService {
+func NewExecutionService(tasks repository.TaskRepository, logs ExecutionLogSource, queue TaskPublisher) *ExecutionService {
 	return &ExecutionService{tasks: tasks, logs: logs, queue: queue}
 }
 
@@ -43,11 +42,8 @@ func (s *ExecutionService) Submit(ctx context.Context, taskID uint64) error {
 		return ErrTaskConflict
 	}
 
-	if err := s.queue.Submit(taskID); err != nil {
-		if errors.Is(err, workerpool.ErrQueueFull) || errors.Is(err, workerpool.ErrClosed) {
-			return ErrQueueUnavailable
-		}
-		return fmt.Errorf("submit task: %w", err)
+	if err := s.queue.Publish(ctx, taskID); err != nil {
+		return fmt.Errorf("%w: publish task: %v", ErrQueueUnavailable, err)
 	}
 	return nil
 }
