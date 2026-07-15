@@ -75,6 +75,7 @@ func TestTaskEndpointsWithMySQL(t *testing.T) {
 		handler.NewTaskHandler(taskService),
 		handler.NewExecutionHandler(executionService),
 		handler.NewAgentHandler(agentService),
+		nil,
 	)
 
 	name := "query-integration-" + time.Now().Format("20060102150405.000000000")

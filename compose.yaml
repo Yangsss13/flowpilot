@@ -48,6 +48,16 @@ services:
       timeout: 5s
       retries: 30
 
+  qdrant:
+    image: qdrant/qdrant:v1.18.0
+    container_name: flowpilot-qdrant
+    restart: unless-stopped
+    ports:
+      - "${QDRANT_PORT:-6334}:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+
 volumes:
   mysql_data:
   rabbitmq_data:
+  qdrant_data:

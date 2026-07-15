@@ -17,6 +17,7 @@ import (
 	"github.com/Yangsss13/flowpilot/internal/executor"
 	"github.com/Yangsss13/flowpilot/internal/handler"
 	"github.com/Yangsss13/flowpilot/internal/httpapi"
+	"github.com/Yangsss13/flowpilot/internal/rag"
 	"github.com/Yangsss13/flowpilot/internal/repository"
 	"github.com/Yangsss13/flowpilot/internal/service"
 	"github.com/Yangsss13/flowpilot/internal/taskqueue"
@@ -53,11 +54,11 @@ func main() {
 	executionRepository := repository.NewGormExecutionRepository(db)
 	taskService := service.NewTaskService(taskRepository)
 	var agentHandler *handler.AgentHandler
-	if cfg.AI.APIKey == "" && cfg.AI.ChatModel == "" {
+	if cfg.AI.ChatModel == "" {
 		log.Println("Agent API disabled: set AI_API_KEY and AI_CHAT_MODEL to enable it")
 	} else {
-		if cfg.AI.APIKey == "" || cfg.AI.ChatModel == "" {
-			log.Fatal("start Agent API: AI_API_KEY and AI_CHAT_MODEL must both be set")
+		if cfg.AI.APIKey == "" {
+			log.Fatal("start Agent API: AI_API_KEY is required when AI_CHAT_MODEL is set")
 		}
 		provider, err := agent.NewOpenAICompatibleProvider(cfg.AI.BaseURL, cfg.AI.APIKey, cfg.AI.ChatModel, nil)
 		if err != nil {
@@ -70,6 +71,23 @@ func main() {
 		}
 		planner := agent.NewPlanner(provider, tools, validator)
 		agentHandler = handler.NewAgentHandler(service.NewAgentService(planner, taskRepository))
+	}
+	var knowledgeHandler *handler.KnowledgeHandler
+	if cfg.AI.EmbeddingModel == "" {
+		log.Println("Knowledge API disabled: set AI_API_KEY and AI_EMBEDDING_MODEL to enable it")
+	} else {
+		if cfg.AI.APIKey == "" {
+			log.Fatal("start Knowledge API: AI_API_KEY is required when AI_EMBEDDING_MODEL is set")
+		}
+		embedder, err := rag.NewOpenAICompatibleEmbedder(cfg.AI.BaseURL, cfg.AI.APIKey, cfg.AI.EmbeddingModel, nil)
+		if err != nil {
+			log.Fatalf("start Knowledge API embedder: %v", err)
+		}
+		vectorStore, err := rag.NewQdrantStore(cfg.Qdrant.URL, cfg.Qdrant.Collection, cfg.Qdrant.APIKey, nil)
+		if err != nil {
+			log.Fatalf("start Knowledge API vector store: %v", err)
+		}
+		knowledgeHandler = handler.NewKnowledgeHandler(rag.NewService(embedder, vectorStore))
 	}
 	stepExecutor := executor.NewStepExecutor()
 	taskExecutor := executor.NewTaskExecutor(taskRepository, executionRepository, stepExecutor)
@@ -94,7 +112,7 @@ func main() {
 	executionService := service.NewExecutionService(taskRepository, executionRepository, taskPublisher)
 	taskHandler := handler.NewTaskHandler(taskService)
 	executionHandler := handler.NewExecutionHandler(executionService)
-	router := httpapi.NewRouter(taskHandler, executionHandler, agentHandler)
+	router := httpapi.NewRouter(taskHandler, executionHandler, agentHandler, knowledgeHandler)
 
 	address := ":" + cfg.Server.Port
 	log.Printf("FlowPilot listening on %s", address)

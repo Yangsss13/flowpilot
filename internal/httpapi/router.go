@@ -6,7 +6,7 @@ import (
 	"github.com/Yangsss13/flowpilot/internal/handler"
 )
 
-func NewRouter(taskHandler *handler.TaskHandler, executionHandler *handler.ExecutionHandler, agentHandler *handler.AgentHandler) *gin.Engine {
+func NewRouter(taskHandler *handler.TaskHandler, executionHandler *handler.ExecutionHandler, agentHandler *handler.AgentHandler, knowledgeHandler *handler.KnowledgeHandler) *gin.Engine {
 	router := gin.Default()
 
 	api := router.Group("/api")
@@ -17,6 +17,10 @@ func NewRouter(taskHandler *handler.TaskHandler, executionHandler *handler.Execu
 	api.GET("/tasks/:id/logs", executionHandler.Logs)
 	if agentHandler != nil {
 		api.POST("/agent/tasks", agentHandler.Create)
+	}
+	if knowledgeHandler != nil {
+		api.POST("/knowledge/documents", knowledgeHandler.Import)
+		api.POST("/knowledge/search", knowledgeHandler.Search)
 	}
 
 	return router
