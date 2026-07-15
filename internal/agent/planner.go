@@ -21,9 +21,34 @@ func (p *Planner) CreatePlan(ctx context.Context, goal string) (Plan, error) {
 	if goal == "" {
 		return Plan{}, fmt.Errorf("goal is required")
 	}
-	plan, err := p.provider.Plan(ctx, goal, p.tools)
+	plan, err := p.provider.Plan(ctx, PlanRequest{Goal: goal}, p.tools)
 	if err != nil {
 		return Plan{}, fmt.Errorf("generate plan: %w", err)
+	}
+	if err := p.validator.ValidatePlan(plan); err != nil {
+		return Plan{}, err
+	}
+	return plan, nil
+}
+
+func (p *Planner) Replan(ctx context.Context, state AgentState, reason string) (Plan, error) {
+	reason = strings.TrimSpace(reason)
+	if state.ReplanCount >= MaxReplans {
+		return Plan{}, fmt.Errorf("replan limit %d reached", MaxReplans)
+	}
+	if reason == "" {
+		return Plan{}, fmt.Errorf("replan reason is required")
+	}
+	previous := state.Plan
+	plan, err := p.provider.Plan(ctx, PlanRequest{
+		Goal:         state.Goal,
+		PreviousPlan: &previous,
+		Observations: state.Observations,
+		ReplanReason: reason,
+		ReplanCount:  state.ReplanCount + 1,
+	}, p.tools)
+	if err != nil {
+		return Plan{}, fmt.Errorf("generate replacement plan: %w", err)
 	}
 	if err := p.validator.ValidatePlan(plan); err != nil {
 		return Plan{}, err

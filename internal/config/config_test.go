@@ -7,10 +7,14 @@ func TestLoadAIConfig(t *testing.T) {
 	t.Setenv("AI_API_KEY", "test-key")
 	t.Setenv("AI_CHAT_MODEL", "test-model")
 	t.Setenv("AI_EMBEDDING_MODEL", "embedding-model")
+	t.Setenv("HTTP_TOOL_ALLOWED_HOSTS", "api.example.com, data.example.com")
 
 	config := Load()
 	if config.AI.BaseURL != "https://example.com/v1" || config.AI.APIKey != "test-key" || config.AI.ChatModel != "test-model" || config.AI.EmbeddingModel != "embedding-model" {
 		t.Fatalf("AI config = %#v", config.AI)
+	}
+	if len(config.AI.HTTPAllowedHosts) != 2 || config.AI.HTTPAllowedHosts[0] != "api.example.com" {
+		t.Fatalf("allowed HTTP hosts = %v", config.AI.HTTPAllowedHosts)
 	}
 }
 

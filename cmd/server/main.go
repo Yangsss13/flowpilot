@@ -53,7 +53,7 @@ func main() {
 	taskRepository := repository.NewGormTaskRepository(db)
 	executionRepository := repository.NewGormExecutionRepository(db)
 	taskService := service.NewTaskService(taskRepository)
-	var agentHandler *handler.AgentHandler
+	var planner *agent.Planner
 	if cfg.AI.ChatModel == "" {
 		log.Println("Agent API disabled: set AI_API_KEY and AI_CHAT_MODEL to enable it")
 	} else {
@@ -69,9 +69,9 @@ func main() {
 		if err != nil {
 			log.Fatalf("start Agent API validator: %v", err)
 		}
-		planner := agent.NewPlanner(provider, tools, validator)
-		agentHandler = handler.NewAgentHandler(service.NewAgentService(planner, taskRepository))
+		planner = agent.NewPlanner(provider, tools, validator)
 	}
+	var ragService *rag.Service
 	var knowledgeHandler *handler.KnowledgeHandler
 	if cfg.AI.EmbeddingModel == "" {
 		log.Println("Knowledge API disabled: set AI_API_KEY and AI_EMBEDDING_MODEL to enable it")
@@ -87,15 +87,30 @@ func main() {
 		if err != nil {
 			log.Fatalf("start Knowledge API vector store: %v", err)
 		}
-		knowledgeHandler = handler.NewKnowledgeHandler(rag.NewService(embedder, vectorStore))
+		ragService = rag.NewService(embedder, vectorStore)
+		knowledgeHandler = handler.NewKnowledgeHandler(ragService)
 	}
 	stepExecutor := executor.NewStepExecutor()
 	taskExecutor := executor.NewTaskExecutor(taskRepository, executionRepository, stepExecutor)
+	var agentRunner executor.TaskRunner
+	var agentHandler *handler.AgentHandler
+	if planner != nil {
+		toolExecutor, err := agent.NewToolExecutor(ragService, cfg.AI.HTTPAllowedHosts, nil)
+		if err != nil {
+			log.Fatalf("start Agent tools: %v", err)
+		}
+		agentRunner = executor.NewAgentRunner(taskRepository, executionRepository, planner, toolExecutor)
+		agentHandler = handler.NewAgentHandler(
+			service.NewAgentService(planner, taskRepository),
+			service.NewAgentExecutionService(taskRepository, taskPublisher),
+		)
+	}
+	dispatcher := executor.NewTaskDispatcher(taskRepository, taskExecutor, agentRunner)
 	taskLock, err := executionlock.NewRedisTaskLocker(redisClient, 5*time.Minute)
 	if err != nil {
 		log.Fatalf("start task execution lock: %v", err)
 	}
-	lockedTaskExecutor := executionlock.NewLockedTaskRunner(taskLock, taskExecutor)
+	lockedTaskExecutor := executionlock.NewLockedTaskRunner(taskLock, dispatcher)
 	appCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
 	pool, err := workerpool.New(context.Background(), lockedTaskExecutor, 4, 100)

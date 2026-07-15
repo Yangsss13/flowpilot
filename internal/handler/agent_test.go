@@ -22,6 +22,16 @@ type fakeAgentApplication struct {
 	calls int
 }
 
+type fakeAgentExecution struct {
+	taskID uint64
+	err    error
+}
+
+func (f *fakeAgentExecution) Submit(_ context.Context, taskID uint64) error {
+	f.taskID = taskID
+	return f.err
+}
+
 func (f *fakeAgentApplication) Create(_ context.Context, input service.CreateAgentTaskInput) (*domain.Task, error) {
 	f.calls++
 	f.input = input
@@ -77,10 +87,39 @@ func TestAgentHandlerMapsServiceErrors(t *testing.T) {
 	}
 }
 
+func TestAgentHandlerRunMapsResults(t *testing.T) {
+	tests := []struct {
+		name       string
+		path       string
+		err        error
+		wantStatus int
+	}{
+		{name: "accepted", path: "/api/agent/tasks/7/run", wantStatus: http.StatusAccepted},
+		{name: "invalid id", path: "/api/agent/tasks/no/run", wantStatus: http.StatusBadRequest},
+		{name: "not found", path: "/api/agent/tasks/7/run", err: service.ErrTaskNotFound, wantStatus: http.StatusNotFound},
+		{name: "conflict", path: "/api/agent/tasks/7/run", err: service.ErrTaskConflict, wantStatus: http.StatusConflict},
+		{name: "queue", path: "/api/agent/tasks/7/run", err: service.ErrQueueUnavailable, wantStatus: http.StatusServiceUnavailable},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			execution := &fakeAgentExecution{err: test.err}
+			gin.SetMode(gin.TestMode)
+			router := gin.New()
+			router.POST("/api/agent/tasks/:id/run", NewAgentHandler(&fakeAgentApplication{}, execution).Run)
+			request := httptest.NewRequest(http.MethodPost, test.path, nil)
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			if response.Code != test.wantStatus {
+				t.Fatalf("status=%d want=%d", response.Code, test.wantStatus)
+			}
+		})
+	}
+}
+
 func performAgentCreateRequest(application AgentApplication, body string) *httptest.ResponseRecorder {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	router.POST("/api/agent/tasks", NewAgentHandler(application).Create)
+	router.POST("/api/agent/tasks", NewAgentHandler(application, nil).Create)
 	request := httptest.NewRequest(http.MethodPost, "/api/agent/tasks", bytes.NewBufferString(body))
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()

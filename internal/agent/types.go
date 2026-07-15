@@ -25,6 +25,14 @@ type Plan struct {
 	Steps []PlanStep `json:"steps"`
 }
 
+type PlanRequest struct {
+	Goal         string        `json:"goal"`
+	PreviousPlan *Plan         `json:"previous_plan,omitempty"`
+	Observations []Observation `json:"observations,omitempty"`
+	ReplanReason string        `json:"replan_reason,omitempty"`
+	ReplanCount  int           `json:"replan_count,omitempty"`
+}
+
 type PlanStep struct {
 	ID        string          `json:"id"`
 	Tool      ToolName        `json:"tool"`
@@ -62,7 +70,7 @@ type Decision struct {
 }
 
 type ChatProvider interface {
-	Plan(ctx context.Context, goal string, tools []ToolDefinition) (Plan, error)
+	Plan(ctx context.Context, request PlanRequest, tools []ToolDefinition) (Plan, error)
 	Decide(ctx context.Context, state AgentState) (Decision, error)
 }
 

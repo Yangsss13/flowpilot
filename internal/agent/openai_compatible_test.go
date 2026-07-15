@@ -31,7 +31,7 @@ func TestOpenAICompatibleProviderPlan(t *testing.T) {
 	defer server.Close()
 
 	provider := newTestOpenAICompatibleProvider(t, server.URL+"/v1", server.Client())
-	plan, err := provider.Plan(context.Background(), "summarize refund policy", DefaultToolDefinitions())
+	plan, err := provider.Plan(context.Background(), PlanRequest{Goal: "summarize refund policy"}, DefaultToolDefinitions())
 	if err != nil {
 		t.Fatalf("Plan() returned error: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestOpenAICompatibleProviderRejectsInvalidModelContent(t *testing.T) {
 	defer server.Close()
 
 	provider := newTestOpenAICompatibleProvider(t, server.URL, server.Client())
-	_, err := provider.Plan(context.Background(), "goal", DefaultToolDefinitions())
+	_, err := provider.Plan(context.Background(), PlanRequest{Goal: "goal"}, DefaultToolDefinitions())
 	if !errors.Is(err, ErrInvalidPlan) {
 		t.Fatalf("Plan() error = %v, want ErrInvalidPlan", err)
 	}
@@ -95,7 +95,7 @@ func TestOpenAICompatibleProviderHandlesHTTPAndEmptyResponses(t *testing.T) {
 			}))
 			defer server.Close()
 			provider := newTestOpenAICompatibleProvider(t, server.URL, server.Client())
-			_, err := provider.Plan(context.Background(), "goal", DefaultToolDefinitions())
+			_, err := provider.Plan(context.Background(), PlanRequest{Goal: "goal"}, DefaultToolDefinitions())
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("Plan() error = %v, want substring %q", err, test.want)
 			}
@@ -117,7 +117,7 @@ func TestOpenAICompatibleProviderHonorsContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
 
-	_, err := provider.Plan(ctx, "goal", DefaultToolDefinitions())
+	_, err := provider.Plan(ctx, PlanRequest{Goal: "goal"}, DefaultToolDefinitions())
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Plan() error = %v, want context deadline exceeded", err)
 	}

@@ -17,6 +17,7 @@ func NewRouter(taskHandler *handler.TaskHandler, executionHandler *handler.Execu
 	api.GET("/tasks/:id/logs", executionHandler.Logs)
 	if agentHandler != nil {
 		api.POST("/agent/tasks", agentHandler.Create)
+		api.POST("/agent/tasks/:id/run", agentHandler.Run)
 	}
 	if knowledgeHandler != nil {
 		api.POST("/knowledge/documents", knowledgeHandler.Import)

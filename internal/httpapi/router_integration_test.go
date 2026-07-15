@@ -74,7 +74,7 @@ func TestTaskEndpointsWithMySQL(t *testing.T) {
 	router := httpapi.NewRouter(
 		handler.NewTaskHandler(taskService),
 		handler.NewExecutionHandler(executionService),
-		handler.NewAgentHandler(agentService),
+		handler.NewAgentHandler(agentService, nil),
 		nil,
 	)
 

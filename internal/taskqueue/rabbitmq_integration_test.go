@@ -84,11 +84,12 @@ func TestRabbitMQDuplicateMessagesExecuteTaskOnce(t *testing.T) {
 
 	stepExecutor := executor.NewStepExecutor()
 	taskExecutor := executor.NewTaskExecutor(taskRepository, executionRepository, stepExecutor)
+	dispatcher := executor.NewTaskDispatcher(taskRepository, taskExecutor, nil)
 	locker, err := executionlock.NewRedisTaskLocker(redisClient, time.Minute)
 	if err != nil {
 		t.Fatalf("create task locker: %v", err)
 	}
-	lockedRunner := executionlock.NewLockedTaskRunner(locker, taskExecutor)
+	lockedRunner := executionlock.NewLockedTaskRunner(locker, dispatcher)
 	pool, err := workerpool.New(context.Background(), lockedRunner, 4, 20)
 	if err != nil {
 		t.Fatalf("create worker pool: %v", err)

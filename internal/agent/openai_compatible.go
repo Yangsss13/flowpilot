@@ -76,11 +76,11 @@ func NewOpenAICompatibleProvider(baseURL, apiKey, model string, client *http.Cli
 	}, nil
 }
 
-func (p *OpenAICompatibleProvider) Plan(ctx context.Context, goal string, tools []ToolDefinition) (Plan, error) {
+func (p *OpenAICompatibleProvider) Plan(ctx context.Context, planRequest PlanRequest, tools []ToolDefinition) (Plan, error) {
 	input, err := json.Marshal(struct {
-		Goal  string           `json:"goal"`
-		Tools []ToolDefinition `json:"tools"`
-	}{Goal: goal, Tools: tools})
+		Request PlanRequest      `json:"request"`
+		Tools   []ToolDefinition `json:"tools"`
+	}{Request: planRequest, Tools: tools})
 	if err != nil {
 		return Plan{}, fmt.Errorf("encode plan input: %w", err)
 	}

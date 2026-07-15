@@ -12,12 +12,12 @@ type fakeChatProvider struct {
 	planErr     error
 	decision    Decision
 	decisionErr error
-	goal        string
+	request     PlanRequest
 	tools       []ToolDefinition
 }
 
-func (f *fakeChatProvider) Plan(_ context.Context, goal string, tools []ToolDefinition) (Plan, error) {
-	f.goal = goal
+func (f *fakeChatProvider) Plan(_ context.Context, request PlanRequest, tools []ToolDefinition) (Plan, error) {
+	f.request = request
 	f.tools = tools
 	return f.plan, f.planErr
 }
@@ -37,8 +37,8 @@ func TestPlannerCreatesValidatedPlan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreatePlan() returned error: %v", err)
 	}
-	if len(plan.Steps) != 1 || provider.goal != "summarize policy" || len(provider.tools) != len(tools) {
-		t.Fatalf("unexpected plan or provider input: plan=%#v goal=%q tools=%d", plan, provider.goal, len(provider.tools))
+	if len(plan.Steps) != 1 || provider.request.Goal != "summarize policy" || len(provider.tools) != len(tools) {
+		t.Fatalf("unexpected plan or provider input: plan=%#v request=%#v tools=%d", plan, provider.request, len(provider.tools))
 	}
 }
 
@@ -74,5 +74,29 @@ func TestPlannerValidatesDecision(t *testing.T) {
 	}
 	if decision.Action != DecisionFinish {
 		t.Fatalf("decision action = %q, want finish", decision.Action)
+	}
+}
+
+func TestPlannerReplanIncludesPreviousState(t *testing.T) {
+	provider := &fakeChatProvider{plan: Plan{Steps: []PlanStep{{
+		ID: "replacement", Tool: ToolRAGQuery, Input: json.RawMessage(`{"query":"new"}`),
+	}}}}
+	planner := NewPlanner(provider, DefaultToolDefinitions(), newTestValidator(t))
+	state := AgentState{
+		Goal:         "goal",
+		Plan:         Plan{Steps: []PlanStep{{ID: "old", Tool: ToolRAGQuery, Input: json.RawMessage(`{"query":"old"}`)}}},
+		Observations: []Observation{{StepID: "old", Error: "not found"}},
+		ReplanCount:  1,
+	}
+	plan, err := planner.Replan(context.Background(), state, "try another query")
+	if err != nil {
+		t.Fatalf("Replan() returned error: %v", err)
+	}
+	if plan.Steps[0].ID != "replacement" || provider.request.PreviousPlan == nil || provider.request.ReplanCount != 2 || provider.request.ReplanReason == "" {
+		t.Fatalf("plan=%#v request=%#v", plan, provider.request)
+	}
+	state.ReplanCount = MaxReplans
+	if _, err := planner.Replan(context.Background(), state, "again"); err == nil {
+		t.Fatal("Replan() accepted exhausted limit")
 	}
 }

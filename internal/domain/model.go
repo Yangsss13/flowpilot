@@ -27,6 +27,8 @@ type Task struct {
 	Description string     `gorm:"size:500;not null;default:''" json:"description"`
 	TaskType    TaskType   `gorm:"column:task_type;type:varchar(20);not null;default:'workflow';index" json:"task_type"`
 	Status      Status     `gorm:"type:varchar(20);not null;index" json:"status"`
+	Result      string     `gorm:"type:text" json:"result,omitempty"`
+	ReplanCount int        `gorm:"not null;default:0" json:"replan_count,omitempty"`
 	Steps       []TaskStep `gorm:"foreignKey:TaskID" json:"steps,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`
 	UpdatedAt   time.Time  `json:"updated_at"`
@@ -42,6 +44,7 @@ type TaskStep struct {
 	ActionType    string          `gorm:"size:30;not null" json:"action_type"`
 	ActionPayload json.RawMessage `gorm:"type:json;not null" json:"action_payload"`
 	DependsOn     json.RawMessage `gorm:"type:json" json:"depends_on,omitempty"`
+	Observation   json.RawMessage `gorm:"type:json" json:"observation,omitempty"`
 	Status        Status          `gorm:"type:varchar(20);not null;index" json:"status"`
 	CreatedAt     time.Time       `json:"created_at"`
 	UpdatedAt     time.Time       `json:"updated_at"`

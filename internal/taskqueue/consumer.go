@@ -220,6 +220,7 @@ func messageRetryCount(headers amqp.Table) (int, error) {
 func isFinalExecutionError(err error) bool {
 	return errors.Is(err, executionlock.ErrNotAcquired) ||
 		errors.Is(err, executor.ErrTaskNotRunnable) ||
+		errors.Is(err, executor.ErrAgentExecution) ||
 		errors.Is(err, executor.ErrStepExecution) ||
 		errors.Is(err, repository.ErrStateConflict)
 }
