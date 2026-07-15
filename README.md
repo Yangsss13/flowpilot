@@ -1,5 +1,25 @@
 # FlowPilot
 
+## 前端控制台
+
+前端位于 `web/`，使用 React、Vite 和 TypeScript。开发服务器会把 `/api` 代理到 `http://127.0.0.1:8080`，因此请先按下文启动后端，再运行：
+
+```bash
+cd web
+npm install
+npm run dev
+```
+
+浏览器访问 `http://127.0.0.1:5173`。前端不读取任何模型密钥；`AI_API_KEY` 及模型配置只保留在后端 `.env`。
+
+提交前可执行完整前端检查：
+
+```bash
+npm run lint
+npm run typecheck
+npm run build
+```
+
 FlowPilot 是一个基于 Go 的可追踪 AI 工作流执行平台。用户可以创建包含多个有序步骤的任务，后端负责校验任务定义、持久化状态，并按统一状态机执行和记录过程。
 
 项目当前处于 v1 开发阶段，优先完成可运行、可测试、可解释的后端业务闭环，不提前堆叠未验证的中间件。

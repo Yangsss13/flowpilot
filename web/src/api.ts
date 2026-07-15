@@ -1,0 +1,60 @@
+import type { ExecutionLog, ImportResult, RunResponse, SearchResponse, Task } from './types'
+
+export type ApiErrorKind = 'offline' | 'unavailable' | 'not-found' | 'validation' | 'conflict' | 'unknown'
+
+export class ApiError extends Error {
+  constructor(message: string, public status: number | null, public kind: ApiErrorKind) { super(message) }
+}
+
+const friendlyMessages: Record<number, string> = {
+  400: '提交的内容不符合要求，请检查后重试。',
+  404: '该功能当前不可用，或请求的内容不存在。',
+  409: '当前状态不允许执行此操作，请刷新后重试。',
+  502: 'AI 服务暂时无法完成请求，请稍后重试。',
+  503: '依赖服务暂时不可用，请确认后端组件已启动。',
+}
+
+function classify(status: number): ApiErrorKind {
+  if (status === 404) return 'not-found'
+  if (status === 400) return 'validation'
+  if (status === 409) return 'conflict'
+  if (status === 502 || status === 503) return 'unavailable'
+  return 'unknown'
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  try {
+    const response = await fetch(path, { ...init, headers: { Accept: 'application/json', ...init?.headers } })
+    if (!response.ok) {
+      throw new ApiError(friendlyMessages[response.status] ?? '请求失败，请稍后重试。', response.status, classify(response.status))
+    }
+    return await response.json() as T
+  } catch (error) {
+    if (error instanceof ApiError) throw error
+    throw new ApiError('无法连接 FlowPilot 后端，请确认服务已在 8080 端口启动。', null, 'offline')
+  }
+}
+
+export const api = {
+  listTasks: async () => {
+    const tasks = await request<Task[]>('/api/tasks')
+    return Promise.all(tasks.map(async task => {
+      try { return await request<Task>(`/api/tasks/${task.id}`) } catch { return task }
+    }))
+  },
+  getTask: (id: number) => request<Task>(`/api/tasks/${id}`),
+  getLogs: (id: number) => request<ExecutionLog[]>(`/api/tasks/${id}/logs`),
+  createAgent: (input: { goal: string; name?: string }) => request<Task>('/api/agent/tasks', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input),
+  }),
+  runTask: (task: Pick<Task, 'id' | 'task_type'>) => request<RunResponse>(
+    task.task_type === 'agent' ? `/api/agent/tasks/${task.id}/run` : `/api/tasks/${task.id}/run`, { method: 'POST' },
+  ),
+  importDocument: (file: File) => {
+    const body = new FormData(); body.append('file', file)
+    return request<ImportResult>('/api/knowledge/documents', { method: 'POST', body })
+  },
+  searchKnowledge: (query: string, topK: number) => request<SearchResponse>('/api/knowledge/search', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query, top_k: topK }),
+  }),
+}
