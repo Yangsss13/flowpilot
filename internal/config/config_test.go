@@ -37,3 +37,12 @@ func TestLoadUsesSiliconFlowBaseURLByDefault(t *testing.T) {
 		t.Fatalf("AI base URL = %q", config.AI.BaseURL)
 	}
 }
+
+func TestLoadUsesLocalCheckpointDirByDefault(t *testing.T) {
+	t.Setenv("CHECKPOINT_DIR", "")
+
+	config := Load()
+	if config.Checkpoint.Dir != "./data/checkpoints" {
+		t.Fatalf("checkpoint dir = %q", config.Checkpoint.Dir)
+	}
+}

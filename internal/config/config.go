@@ -6,12 +6,17 @@ import (
 )
 
 type Config struct {
-	Database DatabaseConfig
-	Redis    RedisConfig
-	RabbitMQ RabbitMQConfig
-	Qdrant   QdrantConfig
-	AI       AIConfig
-	Server   ServerConfig
+	Database   DatabaseConfig
+	Redis      RedisConfig
+	RabbitMQ   RabbitMQConfig
+	Qdrant     QdrantConfig
+	AI         AIConfig
+	Checkpoint CheckpointConfig
+	Server     ServerConfig
+}
+
+type CheckpointConfig struct {
+	Dir string
 }
 
 type ServerConfig struct {
@@ -74,6 +79,9 @@ func Load() Config {
 			ChatModel:        os.Getenv("AI_CHAT_MODEL"),
 			EmbeddingModel:   os.Getenv("AI_EMBEDDING_MODEL"),
 			HTTPAllowedHosts: splitList(os.Getenv("HTTP_TOOL_ALLOWED_HOSTS")),
+		},
+		Checkpoint: CheckpointConfig{
+			Dir: envOrDefault("CHECKPOINT_DIR", "./data/checkpoints"),
 		},
 		Server: ServerConfig{
 			Port: envOrDefault("APP_PORT", "8080"),

@@ -88,6 +88,58 @@ func (r *GormExecutionRepository) CompleteAgentTask(
 	return nil
 }
 
+// InterruptAgentTask atomically closes a task that was recovered while a tool
+// might have been executing. The external side effect cannot be rolled back or
+// proven absent, so automatic replay would be unsafe.
+func (r *GormExecutionRepository) InterruptAgentTask(
+	ctx context.Context,
+	taskID, stepID uint64,
+	observation agent.Observation,
+	message string,
+) error {
+	payload, err := json.Marshal(observation)
+	if err != nil {
+		return fmt.Errorf("encode interruption observation: %w", err)
+	}
+	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if stepID != 0 {
+			result := tx.Model(&domain.TaskStep{}).
+				Where("id = ? AND task_id = ? AND status = ?", stepID, taskID, domain.StatusRunning).
+				Updates(map[string]any{"status": domain.StatusFailed, "observation": payload})
+			if result.Error != nil {
+				return fmt.Errorf("interrupt agent step: %w", result.Error)
+			}
+			if result.RowsAffected != 1 {
+				return ErrStateConflict
+			}
+			if err := tx.Create(&domain.ExecutionLog{
+				TaskID: taskID, StepID: &stepID, Level: domain.LogLevelError, Message: truncateRunes(message, 1000),
+			}).Error; err != nil {
+				return fmt.Errorf("create interrupted step log: %w", err)
+			}
+		}
+		result := tx.Model(&domain.Task{}).
+			Where("id = ? AND task_type = ? AND status = ?", taskID, domain.TaskTypeAgent, domain.StatusRunning).
+			Updates(map[string]any{"status": domain.StatusFailed, "result": message})
+		if result.Error != nil {
+			return fmt.Errorf("interrupt agent task: %w", result.Error)
+		}
+		if result.RowsAffected != 1 {
+			return ErrStateConflict
+		}
+		if err := tx.Create(&domain.ExecutionLog{
+			TaskID: taskID, Level: domain.LogLevelError, Message: truncateRunes(message, 1000),
+		}).Error; err != nil {
+			return fmt.Errorf("create interrupted task log: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("interrupt agent task transaction: %w", err)
+	}
+	return nil
+}
+
 func truncateRunes(value string, limit int) string {
 	runes := []rune(value)
 	if len(runes) <= limit {

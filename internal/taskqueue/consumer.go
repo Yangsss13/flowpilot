@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 
@@ -164,6 +165,18 @@ func (c *Consumer) handleDelivery(ctx context.Context, delivery amqp.Delivery) e
 	}
 
 	executionErr := c.runner.Execute(ctx, message.TaskID)
+	if errors.Is(executionErr, executionlock.ErrNotAcquired) && delivery.Redelivered {
+		// A broker redelivery can arrive before the crashed process's Redis lock
+		// expires. Keep the message unconfirmed and retry later; newly published
+		// duplicates still take the fast ACK path below.
+		timer := time.NewTimer(time.Second)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+		case <-timer.C:
+		}
+		return delivery.Nack(false, true)
+	}
 	if executionErr == nil || isFinalExecutionError(executionErr) {
 		return delivery.Ack(false)
 	}

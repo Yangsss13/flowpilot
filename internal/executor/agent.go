@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Yangsss13/flowpilot/internal/agent"
+	"github.com/Yangsss13/flowpilot/internal/checkpoint"
 	"github.com/Yangsss13/flowpilot/internal/domain"
 )
 
@@ -30,17 +31,19 @@ type AgentStateStore interface {
 	CompleteAgentStep(ctx context.Context, taskID, stepID uint64, next domain.Status, observation agent.Observation) error
 	CompleteAgentTask(ctx context.Context, taskID uint64, next domain.Status, result, message string) error
 	ReplaceAgentPlan(ctx context.Context, taskID uint64, plan agent.Plan, replanCount int) ([]domain.TaskStep, error)
+	InterruptAgentTask(ctx context.Context, taskID, stepID uint64, observation agent.Observation, message string) error
 }
 
 type AgentRunner struct {
-	tasks   TaskSource
-	states  AgentStateStore
-	planner AgentPlanner
-	tools   AgentToolRunner
+	tasks       TaskSource
+	states      AgentStateStore
+	planner     AgentPlanner
+	tools       AgentToolRunner
+	checkpoints checkpoint.Store
 }
 
-func NewAgentRunner(tasks TaskSource, states AgentStateStore, planner AgentPlanner, tools AgentToolRunner) *AgentRunner {
-	return &AgentRunner{tasks: tasks, states: states, planner: planner, tools: tools}
+func NewAgentRunner(tasks TaskSource, states AgentStateStore, planner AgentPlanner, tools AgentToolRunner, checkpoints checkpoint.Store) *AgentRunner {
+	return &AgentRunner{tasks: tasks, states: states, planner: planner, tools: tools, checkpoints: checkpoints}
 }
 
 func (r *AgentRunner) Execute(ctx context.Context, taskID uint64) error {
@@ -48,19 +51,73 @@ func (r *AgentRunner) Execute(ctx context.Context, taskID uint64) error {
 	if err != nil {
 		return fmt.Errorf("load agent task %d: %w", taskID, err)
 	}
-	if task.TaskType != domain.TaskTypeAgent || (task.Status != domain.StatusPending && task.Status != domain.StatusFailed) {
+	if task.TaskType != domain.TaskTypeAgent {
 		return fmt.Errorf("%w: task %d has type %s and status %s", ErrTaskNotRunnable, task.ID, task.TaskType, task.Status)
 	}
 	state, err := agentStateFromTask(task)
 	if err != nil {
 		return fmt.Errorf("load agent state: %w", err)
 	}
-	if err := r.states.TransitionTask(ctx, task.ID, task.Status, domain.StatusRunning, domain.LogLevelInfo, "agent task started"); err != nil {
-		return fmt.Errorf("start agent task %d: %w", task.ID, err)
+	startIteration := 0
+	switch task.Status {
+	case domain.StatusPending, domain.StatusFailed:
+		if err := r.states.TransitionTask(ctx, task.ID, task.Status, domain.StatusRunning, domain.LogLevelInfo, "agent task started"); err != nil {
+			return fmt.Errorf("start agent task %d: %w", task.ID, err)
+		}
+		task.Status = domain.StatusRunning
+		if err := r.saveCheckpoint(ctx, task.ID, checkpoint.PhaseReady, nil, 0, state); err != nil {
+			r.failTask(task.ID, "save initial agent checkpoint failed")
+			return err
+		}
+	case domain.StatusRunning:
+		value, ok, loadErr := r.checkpoints.Load(ctx, task.ID)
+		if loadErr != nil {
+			return r.interruptTask(task, "agent checkpoint could not be loaded: "+loadErr.Error())
+		}
+		if !ok {
+			return r.interruptTask(task, "agent was running without a checkpoint")
+		}
+		startIteration = value.NextIteration
+		if startIteration < 0 || startIteration > MaxAgentIterations {
+			return r.interruptTask(task, "agent checkpoint iteration is out of range")
+		}
+		if value.Phase == checkpoint.PhaseExecuting {
+			step := agentStepByID(task.Steps, value.CurrentStepID)
+			if step == nil {
+				return r.interruptTask(task, "agent checkpoint references an unknown executing step")
+			}
+			if step.Status == domain.StatusRunning {
+				return r.interruptTask(task, "agent stopped while a tool may have been executing")
+			}
+			if step.Status != domain.StatusSuccess && step.Status != domain.StatusFailed {
+				return r.interruptTask(task, "executing checkpoint does not have a persisted step result")
+			}
+			if runningAgentStep(task.Steps) != nil {
+				return r.interruptTask(task, "agent database state has another running step")
+			}
+			startIteration++
+		} else if runningAgentStep(task.Steps) != nil {
+			return r.interruptTask(task, "agent database state has a running step outside an executing checkpoint")
+		}
+		if state.ReplanCount > value.State.ReplanCount && startIteration == value.NextIteration {
+			startIteration++
+		}
+		if startIteration > MaxAgentIterations {
+			return r.interruptTask(task, "reconciled agent checkpoint iteration is out of range")
+		}
+		// MySQL owns business facts. Rewriting the checkpoint here reconciles a
+		// crash between a MySQL commit and the following MiniKV write.
+		if err := r.saveCheckpoint(ctx, task.ID, checkpoint.PhaseReady, nil, startIteration, state); err != nil {
+			return r.interruptTask(task, "reconcile agent checkpoint failed: "+err.Error())
+		}
+	case domain.StatusSuccess:
+		_ = r.deleteCheckpoint(task.ID)
+		return fmt.Errorf("%w: task %d has type %s and status %s", ErrTaskNotRunnable, task.ID, task.TaskType, task.Status)
+	default:
+		return fmt.Errorf("%w: task %d has type %s and status %s", ErrTaskNotRunnable, task.ID, task.TaskType, task.Status)
 	}
-	task.Status = domain.StatusRunning
 
-	for iteration := 0; iteration < MaxAgentIterations; iteration++ {
+	for iteration := startIteration; iteration < MaxAgentIterations; iteration++ {
 		decision, err := r.planner.Decide(ctx, state)
 		if err != nil {
 			r.failTask(task.ID, "agent decision failed")
@@ -93,6 +150,10 @@ func (r *AgentRunner) Execute(ctx context.Context, taskID uint64) error {
 			}
 			task.Steps = steps
 			state.Plan = plan
+			if err := r.saveCheckpoint(ctx, task.ID, checkpoint.PhaseReady, nil, iteration+1, state); err != nil {
+				r.failTask(task.ID, "save replanned agent checkpoint failed")
+				return err
+			}
 		case agent.DecisionContinue:
 			step, err := runnableAgentStep(task.Steps, decision.NextStepID)
 			if err != nil {
@@ -104,6 +165,9 @@ func (r *AgentRunner) Execute(ctx context.Context, taskID uint64) error {
 				return fmt.Errorf("start agent step %d: %w", step.ID, err)
 			}
 			step.Status = domain.StatusRunning
+			if err := r.saveCheckpoint(ctx, task.ID, checkpoint.PhaseExecuting, step, iteration, state); err != nil {
+				return r.interruptTask(task, "save executing agent checkpoint failed: "+err.Error())
+			}
 			output, toolErr := r.tools.Execute(ctx, agent.ToolName(step.ActionType), step.ActionPayload)
 			observation := agent.Observation{StepID: step.Name, Output: output}
 			next := domain.StatusSuccess
@@ -118,6 +182,10 @@ func (r *AgentRunner) Execute(ctx context.Context, taskID uint64) error {
 			step.Status = next
 			step.Observation, _ = json.Marshal(observation)
 			state.Observations = append(state.Observations, observation)
+			if err := r.saveCheckpoint(ctx, task.ID, checkpoint.PhaseReady, nil, iteration+1, state); err != nil {
+				r.failTask(task.ID, "save completed agent checkpoint failed")
+				return err
+			}
 		}
 	}
 	reason := fmt.Sprintf("agent exceeded %d decision iterations", MaxAgentIterations)
@@ -188,9 +256,73 @@ func (r *AgentRunner) completeStep(taskID, stepID uint64, next domain.Status, ob
 func (r *AgentRunner) completeTask(taskID uint64, next domain.Status, result, message string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	return r.states.CompleteAgentTask(ctx, taskID, next, result, message)
+	if err := r.states.CompleteAgentTask(ctx, taskID, next, result, message); err != nil {
+		return err
+	}
+	_ = r.checkpoints.Delete(ctx, taskID)
+	return nil
 }
 
 func (r *AgentRunner) failTask(taskID uint64, message string) {
 	_ = r.completeTask(taskID, domain.StatusFailed, message, message)
+}
+
+func (r *AgentRunner) saveCheckpoint(
+	ctx context.Context,
+	taskID uint64,
+	phase checkpoint.Phase,
+	step *domain.TaskStep,
+	nextIteration int,
+	state agent.AgentState,
+) error {
+	value := checkpoint.Agent{TaskID: taskID, Phase: phase, NextIteration: nextIteration, State: state}
+	if step != nil {
+		value.CurrentStepID = step.ID
+		value.CurrentStepName = step.Name
+	}
+	if err := r.checkpoints.Save(ctx, value); err != nil {
+		return fmt.Errorf("save agent checkpoint: %w", err)
+	}
+	return nil
+}
+
+func (r *AgentRunner) interruptTask(task *domain.Task, reason string) error {
+	step := runningAgentStep(task.Steps)
+	var stepID uint64
+	observation := agent.Observation{Error: reason}
+	if step != nil {
+		stepID = step.ID
+		observation.StepID = step.Name
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := r.states.InterruptAgentTask(ctx, task.ID, stepID, observation, reason); err != nil {
+		return fmt.Errorf("interrupt agent task %d: %w", task.ID, err)
+	}
+	_ = r.checkpoints.Delete(ctx, task.ID)
+	return fmt.Errorf("%w: %s", ErrAgentExecution, reason)
+}
+
+func (r *AgentRunner) deleteCheckpoint(taskID uint64) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	return r.checkpoints.Delete(ctx, taskID)
+}
+
+func runningAgentStep(steps []domain.TaskStep) *domain.TaskStep {
+	for index := range steps {
+		if steps[index].Status == domain.StatusRunning {
+			return &steps[index]
+		}
+	}
+	return nil
+}
+
+func agentStepByID(steps []domain.TaskStep, stepID uint64) *domain.TaskStep {
+	for index := range steps {
+		if steps[index].ID == stepID {
+			return &steps[index]
+		}
+	}
+	return nil
 }

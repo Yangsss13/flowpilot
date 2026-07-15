@@ -65,3 +65,46 @@ func TestAgentRuntimePersistenceWithMySQL(t *testing.T) {
 		t.Fatalf("persisted agent task = %#v", loaded)
 	}
 }
+
+func TestInterruptAgentTaskWithMySQL(t *testing.T) {
+	if os.Getenv("FLOWPILOT_INTEGRATION") != "1" {
+		t.Skip("set FLOWPILOT_INTEGRATION=1 to run MySQL integration tests")
+	}
+	db, err := database.OpenMySQL(config.Load().Database)
+	if err != nil {
+		t.Fatalf("open MySQL: %v", err)
+	}
+	if err := database.Migrate(db); err != nil {
+		t.Fatalf("migrate MySQL: %v", err)
+	}
+	task := &domain.Task{
+		Name:        "agent-interruption-" + time.Now().Format("20060102150405.000000000"),
+		Description: "goal", TaskType: domain.TaskTypeAgent, Status: domain.StatusRunning,
+		Steps: []domain.TaskStep{{
+			Name: "external-call", StepOrder: 1, ActionType: string(agent.ToolHTTPRequest),
+			ActionPayload: json.RawMessage(`{"method":"POST","url":"https://example.com"}`), Status: domain.StatusRunning,
+		}},
+	}
+	tasks := NewGormTaskRepository(db)
+	states := NewGormExecutionRepository(db)
+	if err := tasks.Create(context.Background(), task); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	t.Cleanup(func() {
+		db.Where("task_id = ?", task.ID).Delete(&domain.ExecutionLog{})
+		db.Where("task_id = ?", task.ID).Delete(&domain.TaskStep{})
+		db.Delete(&domain.Task{}, task.ID)
+	})
+	reason := "agent stopped while a tool may have been executing"
+	observation := agent.Observation{StepID: task.Steps[0].Name, Error: reason}
+	if err := states.InterruptAgentTask(context.Background(), task.ID, task.Steps[0].ID, observation, reason); err != nil {
+		t.Fatalf("InterruptAgentTask() error = %v", err)
+	}
+	loaded, err := tasks.GetByID(context.Background(), task.ID)
+	if err != nil {
+		t.Fatalf("reload task: %v", err)
+	}
+	if loaded.Status != domain.StatusFailed || loaded.Steps[0].Status != domain.StatusFailed || len(loaded.Steps[0].Observation) == 0 {
+		t.Fatalf("interrupted task = %#v", loaded)
+	}
+}

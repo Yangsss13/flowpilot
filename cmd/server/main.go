@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Yangsss13/flowpilot/internal/agent"
+	"github.com/Yangsss13/flowpilot/internal/checkpoint"
 	"github.com/Yangsss13/flowpilot/internal/config"
 	"github.com/Yangsss13/flowpilot/internal/database"
 	"github.com/Yangsss13/flowpilot/internal/executionlock"
@@ -95,11 +96,20 @@ func main() {
 	var agentRunner executor.TaskRunner
 	var agentHandler *handler.AgentHandler
 	if planner != nil {
+		checkpointStore, err := checkpoint.Open(cfg.Checkpoint.Dir)
+		if err != nil {
+			log.Fatalf("start Agent checkpoint store: %v", err)
+		}
+		defer func() {
+			if err := checkpointStore.Close(); err != nil {
+				log.Printf("close Agent checkpoint store: %v", err)
+			}
+		}()
 		toolExecutor, err := agent.NewToolExecutor(ragService, cfg.AI.HTTPAllowedHosts, nil)
 		if err != nil {
 			log.Fatalf("start Agent tools: %v", err)
 		}
-		agentRunner = executor.NewAgentRunner(taskRepository, executionRepository, planner, toolExecutor)
+		agentRunner = executor.NewAgentRunner(taskRepository, executionRepository, planner, toolExecutor, checkpointStore)
 		agentHandler = handler.NewAgentHandler(
 			service.NewAgentService(planner, taskRepository),
 			service.NewAgentExecutionService(taskRepository, taskPublisher),

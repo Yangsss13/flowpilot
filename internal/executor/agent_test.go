@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Yangsss13/flowpilot/internal/agent"
+	"github.com/Yangsss13/flowpilot/internal/checkpoint"
 	"github.com/Yangsss13/flowpilot/internal/domain"
 )
 
@@ -52,6 +53,8 @@ type fakeAgentStateStore struct {
 	observations []agent.Observation
 	replanCount  int
 	nextStepID   uint64
+	interrupts   int
+	taskStarts   int
 }
 
 func (f *fakeAgentStateStore) TransitionTask(_ context.Context, _ uint64, current, next domain.Status, _ domain.LogLevel, _ string) error {
@@ -59,6 +62,41 @@ func (f *fakeAgentStateStore) TransitionTask(_ context.Context, _ uint64, curren
 		return err
 	}
 	f.taskStatus = next
+	f.taskStarts++
+	return nil
+}
+
+func (f *fakeAgentStateStore) InterruptAgentTask(_ context.Context, _ uint64, _ uint64, observation agent.Observation, message string) error {
+	f.interrupts++
+	f.taskStatus = domain.StatusFailed
+	f.taskResult = message
+	if observation.StepID != "" || observation.Error != "" {
+		f.observations = append(f.observations, observation)
+	}
+	return nil
+}
+
+type fakeCheckpointStore struct {
+	value   checkpoint.Agent
+	exists  bool
+	saves   []checkpoint.Agent
+	deletes int
+}
+
+func (f *fakeCheckpointStore) Save(_ context.Context, value checkpoint.Agent) error {
+	f.value = value
+	f.exists = true
+	f.saves = append(f.saves, value)
+	return nil
+}
+
+func (f *fakeCheckpointStore) Load(_ context.Context, _ uint64) (checkpoint.Agent, bool, error) {
+	return f.value, f.exists, nil
+}
+
+func (f *fakeCheckpointStore) Delete(_ context.Context, _ uint64) error {
+	f.exists = false
+	f.deletes++
 	return nil
 }
 
@@ -97,7 +135,8 @@ func TestAgentRunnerExecutesPlanAndFinishes(t *testing.T) {
 	}}
 	tools := &fakeAgentTools{}
 	store := &fakeAgentStateStore{}
-	runner := NewAgentRunner(&fakeTaskSource{task: task}, store, planner, tools)
+	checkpoints := &fakeCheckpointStore{}
+	runner := NewAgentRunner(&fakeTaskSource{task: task}, store, planner, tools, checkpoints)
 
 	if err := runner.Execute(context.Background(), task.ID); err != nil {
 		t.Fatalf("Execute() returned error: %v", err)
@@ -107,6 +146,9 @@ func TestAgentRunnerExecutesPlanAndFinishes(t *testing.T) {
 	}
 	if !equalStrings(tools.calls, []string{"search", "summarize"}) {
 		t.Fatalf("tool calls = %v", tools.calls)
+	}
+	if checkpoints.exists || checkpoints.deletes != 1 {
+		t.Fatalf("checkpoint exists=%v deletes=%d", checkpoints.exists, checkpoints.deletes)
 	}
 }
 
@@ -118,7 +160,7 @@ func TestAgentRunnerLetsModelHandleToolFailure(t *testing.T) {
 		{Action: agent.DecisionFail, Reason: "knowledge unavailable"},
 	}}
 	store := &fakeAgentStateStore{}
-	runner := NewAgentRunner(&fakeTaskSource{task: task}, store, planner, &fakeAgentTools{fail: map[string]error{"search": errors.New("Qdrant down")}})
+	runner := NewAgentRunner(&fakeTaskSource{task: task}, store, planner, &fakeAgentTools{fail: map[string]error{"search": errors.New("Qdrant down")}}, &fakeCheckpointStore{})
 
 	err := runner.Execute(context.Background(), task.ID)
 	if !errors.Is(err, ErrAgentExecution) || store.taskStatus != domain.StatusFailed || len(store.observations) != 1 || store.observations[0].Error == "" {
@@ -139,7 +181,7 @@ func TestAgentRunnerReplansAndExecutesReplacement(t *testing.T) {
 		}}},
 	}
 	store := &fakeAgentStateStore{}
-	runner := NewAgentRunner(&fakeTaskSource{task: task}, store, planner, &fakeAgentTools{})
+	runner := NewAgentRunner(&fakeTaskSource{task: task}, store, planner, &fakeAgentTools{}, &fakeCheckpointStore{})
 
 	if err := runner.Execute(context.Background(), task.ID); err != nil {
 		t.Fatalf("Execute() returned error: %v", err)
@@ -153,11 +195,99 @@ func TestAgentRunnerRejectsUnsatisfiedDependency(t *testing.T) {
 	task := testAgentTask()
 	planner := &fakeAgentPlanner{decisions: []agent.Decision{{Action: agent.DecisionContinue, NextStepID: "summarize"}}}
 	store := &fakeAgentStateStore{}
-	runner := NewAgentRunner(&fakeTaskSource{task: task}, store, planner, &fakeAgentTools{})
+	runner := NewAgentRunner(&fakeTaskSource{task: task}, store, planner, &fakeAgentTools{}, &fakeCheckpointStore{})
 
 	err := runner.Execute(context.Background(), task.ID)
 	if !errors.Is(err, ErrAgentExecution) || store.taskStatus != domain.StatusFailed {
 		t.Fatalf("error=%v status=%s", err, store.taskStatus)
+	}
+}
+
+func TestAgentRunnerResumesFromSafeCheckpoint(t *testing.T) {
+	task := testAgentTask()
+	task.Status = domain.StatusRunning
+	task.Steps[0].Status = domain.StatusSuccess
+	task.Steps[0].Observation = json.RawMessage(`{"step_id":"search","output":{"value":"search result"}}`)
+	state, err := agentStateFromTask(task)
+	if err != nil {
+		t.Fatalf("agentStateFromTask() error = %v", err)
+	}
+	planner := &fakeAgentPlanner{decisions: []agent.Decision{
+		{Action: agent.DecisionContinue, NextStepID: "summarize"},
+		{Action: agent.DecisionFinish, FinalAnswer: "resumed"},
+	}}
+	states := &fakeAgentStateStore{taskStatus: domain.StatusRunning}
+	checkpoints := &fakeCheckpointStore{exists: true, value: checkpoint.Agent{
+		TaskID: task.ID, Phase: checkpoint.PhaseReady, NextIteration: 1, State: state,
+	}}
+	tools := &fakeAgentTools{}
+	runner := NewAgentRunner(&fakeTaskSource{task: task}, states, planner, tools, checkpoints)
+
+	if err := runner.Execute(context.Background(), task.ID); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if states.taskStarts != 0 || states.taskStatus != domain.StatusSuccess || !equalStrings(tools.calls, []string{"summarize"}) {
+		t.Fatalf("starts=%d status=%s calls=%v", states.taskStarts, states.taskStatus, tools.calls)
+	}
+}
+
+func TestAgentRunnerFailsAmbiguousExecutingCheckpointWithoutReplaying(t *testing.T) {
+	task := testAgentTask()
+	task.Status = domain.StatusRunning
+	task.Steps[0].Status = domain.StatusRunning
+	states := &fakeAgentStateStore{taskStatus: domain.StatusRunning}
+	checkpoints := &fakeCheckpointStore{exists: true, value: checkpoint.Agent{
+		TaskID: task.ID, Phase: checkpoint.PhaseExecuting, CurrentStepID: task.Steps[0].ID,
+	}}
+	tools := &fakeAgentTools{}
+	runner := NewAgentRunner(&fakeTaskSource{task: task}, states, &fakeAgentPlanner{}, tools, checkpoints)
+
+	err := runner.Execute(context.Background(), task.ID)
+	if !errors.Is(err, ErrAgentExecution) || states.interrupts != 1 || states.taskStatus != domain.StatusFailed {
+		t.Fatalf("error=%v interrupts=%d status=%s", err, states.interrupts, states.taskStatus)
+	}
+	if len(tools.calls) != 0 {
+		t.Fatalf("tool was replayed: %v", tools.calls)
+	}
+}
+
+func TestAgentRunnerAdvancesStaleExecutingCheckpointAfterMySQLCommit(t *testing.T) {
+	task := testAgentTask()
+	task.Status = domain.StatusRunning
+	task.Steps[0].Status = domain.StatusSuccess
+	task.Steps[0].Observation = json.RawMessage(`{"step_id":"search","output":{"value":"done"}}`)
+	states := &fakeAgentStateStore{taskStatus: domain.StatusRunning}
+	checkpoints := &fakeCheckpointStore{exists: true, value: checkpoint.Agent{
+		TaskID: task.ID, Phase: checkpoint.PhaseExecuting, CurrentStepID: task.Steps[0].ID, NextIteration: 0,
+	}}
+	planner := &fakeAgentPlanner{decisions: []agent.Decision{{Action: agent.DecisionFinish, FinalAnswer: "done"}}}
+	tools := &fakeAgentTools{}
+	runner := NewAgentRunner(&fakeTaskSource{task: task}, states, planner, tools, checkpoints)
+
+	if err := runner.Execute(context.Background(), task.ID); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if len(checkpoints.saves) == 0 || checkpoints.saves[0].NextIteration != 1 {
+		t.Fatalf("reconciled checkpoints = %#v", checkpoints.saves)
+	}
+	if len(tools.calls) != 0 {
+		t.Fatalf("persisted tool was replayed: %v", tools.calls)
+	}
+}
+
+func TestAgentRunnerRejectsExecutingCheckpointWithoutPersistedResult(t *testing.T) {
+	task := testAgentTask()
+	task.Status = domain.StatusRunning
+	states := &fakeAgentStateStore{taskStatus: domain.StatusRunning}
+	checkpoints := &fakeCheckpointStore{exists: true, value: checkpoint.Agent{
+		TaskID: task.ID, Phase: checkpoint.PhaseExecuting, CurrentStepID: task.Steps[0].ID,
+	}}
+	tools := &fakeAgentTools{}
+	runner := NewAgentRunner(&fakeTaskSource{task: task}, states, &fakeAgentPlanner{}, tools, checkpoints)
+
+	err := runner.Execute(context.Background(), task.ID)
+	if !errors.Is(err, ErrAgentExecution) || states.interrupts != 1 || len(tools.calls) != 0 {
+		t.Fatalf("error=%v interrupts=%d calls=%v", err, states.interrupts, tools.calls)
 	}
 }
 

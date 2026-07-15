@@ -83,6 +83,24 @@ func TestConsumerAcknowledgesDuplicateWithoutExecutingRetry(t *testing.T) {
 	}
 }
 
+func TestConsumerRequeuesRedeliveredTaskWhileOldLockExists(t *testing.T) {
+	acknowledger := &fakeAcknowledger{}
+	consumer := &Consumer{
+		runner: &fakeRunner{err: executionlock.ErrNotAcquired}, publisher: &fakeRetryPublisher{}, maxRetries: 3,
+	}
+	delivery := taskDelivery(7, 0, acknowledger)
+	delivery.Redelivered = true
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if err := consumer.handleDelivery(ctx, delivery); err != nil {
+		t.Fatalf("handleDelivery() error = %v", err)
+	}
+	if acknowledger.acked != 0 || acknowledger.nacked != 1 || !acknowledger.nackRequeued {
+		t.Fatalf("acked=%d nacked=%d requeue=%v", acknowledger.acked, acknowledger.nacked, acknowledger.nackRequeued)
+	}
+}
+
 func TestConsumerAcknowledgesFinalBusinessErrors(t *testing.T) {
 	tests := []struct {
 		name string

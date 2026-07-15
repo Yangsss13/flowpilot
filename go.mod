@@ -3,6 +3,7 @@ module github.com/Yangsss13/flowpilot
 go 1.26.0
 
 require (
+	github.com/Yangsss13/miniKV v0.0.0-20260715063820-334a662fdbf3
 	github.com/gin-gonic/gin v1.12.0
 	github.com/go-sql-driver/mysql v1.8.1
 	github.com/rabbitmq/amqp091-go v1.12.0

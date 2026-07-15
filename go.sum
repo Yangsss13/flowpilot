@@ -1,5 +1,7 @@
 filippo.io/edwards25519 v1.1.0 h1:FNf4tywRC1HmFuKW5xopWpigGjJKiJSV0Cqo0cJWDaA=
 filippo.io/edwards25519 v1.1.0/go.mod h1:BxyFTGdWcka3PhytdK4V28tE5sGfRvvvRV7EaN4VDT4=
+github.com/Yangsss13/miniKV v0.0.0-20260715063820-334a662fdbf3 h1:fRzCNUGTtm0ZSPTeVmTQUN/WBoIcPIt9vGd9Ok3cfG0=
+github.com/Yangsss13/miniKV v0.0.0-20260715063820-334a662fdbf3/go.mod h1:hs6LYs6bCCNUbePbNfJvi5OiTBo4cZcQX6cnPyBcTGo=
 github.com/bsm/ginkgo/v2 v2.12.0 h1:Ny8MWAHyOepLGlLKYmXG4IEkioBysk6GpaRTLC8zwWs=
 github.com/bsm/ginkgo/v2 v2.12.0/go.mod h1:SwYbGRRDovPVboqFv0tPTcG1sN61LM1Z4ARdbAV9g4c=
 github.com/bsm/gomega v1.27.10 h1:yeMWxP2pV2fG3FgAODIY8EiRE3dy0aeFYt4l7wh6yKA=
