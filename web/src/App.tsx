@@ -78,7 +78,7 @@ export default function App() {
     {open && <button className="scrim" aria-label="关闭导航" onClick={() => setOpen(false)} />}
     <div className="main-column">
       <div className="topbar"><button className="menu-button" aria-label={open ? '关闭导航' : '打开导航'} onClick={() => setOpen(!open)}>{open ? <X /> : <Menu />}</button><span>{current}</span><div className={`topbar-status connection-${connection}`}><ConnectionIcon size={14} className={connection === 'checking' ? 'spin' : ''} />{connectionLabel}</div></div>
-      <main><Routes><Route path="/" element={<Dashboard capabilities={capabilities} />} /><Route path="/agent/new" element={<AgentCreate capabilities={capabilities} />} /><Route path="/workflow/new" element={<WorkflowCreate />} /><Route path="/tasks" element={<Tasks />} /><Route path="/tasks/:id" element={<TaskDetail />} /><Route path="/knowledge" element={<Knowledge enabled={capabilities?.knowledge_enabled} />} /></Routes></main>
+      <main><Routes><Route path="/" element={<Dashboard capabilities={capabilities} />} /><Route path="/agent/new" element={<AgentCreate capabilities={capabilities} />} /><Route path="/workflow/new" element={<WorkflowCreate />} /><Route path="/tasks" element={<Tasks />} /><Route path="/tasks/:id" element={<TaskDetail />} /><Route path="/knowledge" element={<Knowledge capability={capabilities?.knowledge} enabled={capabilities?.knowledge_enabled} />} /></Routes></main>
     </div>
   </div>
 }

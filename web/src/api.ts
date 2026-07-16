@@ -1,4 +1,4 @@
-import type { CapabilitiesResponse, ExecutionLog, HealthResponse, ImportResult, ListTasksParams, ReadinessResponse, RunResponse, SearchResponse, Task, TaskListResponse, TaskStatsResponse } from './types'
+import type { CapabilitiesResponse, DeleteKnowledgeDocumentResponse, DocumentStatus, ExecutionLog, HealthResponse, IngestionJob, KnowledgeDocumentDetail, KnowledgeDocumentListResponse, KnowledgeUploadResponse, ListTasksParams, ReadinessResponse, RunResponse, SearchResponse, Task, TaskListResponse, TaskStatsResponse } from './types'
 
 export type ApiErrorKind = 'offline' | 'unavailable' | 'not-found' | 'validation' | 'conflict' | 'unknown'
 
@@ -63,9 +63,28 @@ export const api = {
   ),
   importDocument: (file: File) => {
     const body = new FormData(); body.append('file', file)
-    return request<ImportResult>('/api/knowledge/documents', { method: 'POST', body })
+    return request<KnowledgeUploadResponse>('/api/knowledge/documents', { method: 'POST', body })
   },
-  searchKnowledge: (query: string, topK: number) => request<SearchResponse>('/api/knowledge/search', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query, top_k: topK }),
+  uploadDocumentVersion: (documentId: number, file: File) => {
+    const body = new FormData(); body.append('file', file)
+    return request<KnowledgeUploadResponse>(`/api/knowledge/documents/${documentId}/versions`, { method: 'POST', body })
+  },
+  listKnowledgeDocuments: (params: { page?: number; pageSize?: number; status?: DocumentStatus; format?: string; query?: string } = {}) => {
+    const query = new URLSearchParams()
+    if (params.page) query.set('page', String(params.page))
+    if (params.pageSize) query.set('page_size', String(params.pageSize))
+    if (params.status) query.set('status', params.status)
+    if (params.format) query.set('format', params.format)
+    if (params.query?.trim()) query.set('query', params.query.trim())
+    const suffix = query.size ? `?${query.toString()}` : ''
+    return request<KnowledgeDocumentListResponse>(`/api/knowledge/documents${suffix}`)
+  },
+  getKnowledgeDocument: (id: number) => request<KnowledgeDocumentDetail>(`/api/knowledge/documents/${id}`),
+  deleteKnowledgeDocument: (id: number) => request<DeleteKnowledgeDocumentResponse>(`/api/knowledge/documents/${id}`, { method: 'DELETE' }),
+  getKnowledgeJob: (id: number) => request<IngestionJob>(`/api/knowledge/jobs/${id}`),
+  retryKnowledgeJob: (id: number) => request<IngestionJob>(`/api/knowledge/jobs/${id}/retry`, { method: 'POST' }),
+  cancelKnowledgeJob: (id: number) => request<IngestionJob>(`/api/knowledge/jobs/${id}/cancel`, { method: 'POST' }),
+  searchKnowledge: (query: string, topK: number, minScore?: number) => request<SearchResponse>('/api/knowledge/search', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query, top_k: topK, ...(minScore ? { min_score: minScore } : {}) }),
   }),
 }
