@@ -16,7 +16,7 @@ const stageLabels: Record<IngestionStage, string> = {
 }
 
 const documentStatusLabels: Record<DocumentStatus, string> = {
-  Queued: '等待处理', Processing: '处理中', Ready: '可检索', Failed: '处理失败', Deleting: '正在清理',
+  Queued: '等待处理', Processing: '处理中', Ready: '可检索', Failed: '处理失败', Canceled: '已取消', Deleting: '正在清理',
 }
 
 function extensionOf(filename: string) {

@@ -6,6 +6,7 @@ require (
 	github.com/Yangsss13/miniKV v0.0.0-20260715063820-334a662fdbf3
 	github.com/gin-gonic/gin v1.12.0
 	github.com/go-sql-driver/mysql v1.8.1
+	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728
 	github.com/rabbitmq/amqp091-go v1.12.0
 	github.com/redis/go-redis/v9 v9.18.0
 	gorm.io/driver/mysql v1.6.0

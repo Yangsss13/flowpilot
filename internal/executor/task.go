@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -19,10 +20,11 @@ type TaskSource interface {
 type ExecutionStateStore interface {
 	TransitionTask(ctx context.Context, taskID uint64, current, next domain.Status, level domain.LogLevel, message string) error
 	TransitionStep(ctx context.Context, taskID, stepID uint64, current, next domain.Status, level domain.LogLevel, message string) error
+	CompleteWorkflowStep(ctx context.Context, taskID, stepID uint64, observation json.RawMessage, level domain.LogLevel, message string) error
 }
 
 type StepRunner interface {
-	Execute(ctx context.Context, step domain.TaskStep) error
+	Execute(ctx context.Context, step domain.TaskStep) (json.RawMessage, error)
 }
 
 type TaskExecutor struct {
@@ -69,7 +71,7 @@ func (e *TaskExecutor) Execute(ctx context.Context, taskID uint64) error {
 			return e.failTask(ctx, task.ID, fmt.Errorf("start step %d: %w", step.ID, err))
 		}
 
-		executionErr := e.steps.Execute(ctx, step)
+		observation, executionErr := e.steps.Execute(ctx, step)
 		finalizeCtx, cancelFinalize := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 		if executionErr != nil {
 			stepErr := fmt.Errorf("%w: step %d: %v", ErrStepExecution, step.ID, executionErr)
@@ -82,9 +84,8 @@ func (e *TaskExecutor) Execute(ctx context.Context, taskID uint64) error {
 			return e.failTask(ctx, task.ID, errors.Join(stepErr, transitionErr))
 		}
 
-		if err := e.states.TransitionStep(
-			finalizeCtx, task.ID, step.ID,
-			domain.StatusRunning, domain.StatusSuccess,
+		if err := e.states.CompleteWorkflowStep(
+			finalizeCtx, task.ID, step.ID, observation,
 			domain.LogLevelInfo, fmt.Sprintf("step %d succeeded", step.StepOrder),
 		); err != nil {
 			cancelFinalize()

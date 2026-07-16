@@ -44,12 +44,18 @@ func TestHealthAndReadyHandlers(t *testing.T) {
 }
 
 func TestCapabilityHandlerReturnsEnabledTools(t *testing.T) {
-	handler := NewCapabilityHandler(true, []agent.ToolDefinition{{Name: agent.ToolRAGQuery, Description: "search"}}, true)
+	handler := NewCapabilityHandler(true, []agent.ToolDefinition{{Name: agent.ToolRAGQuery, Description: "search"}}, true, KnowledgeCapability{
+		AsyncIngestion: true, MediaIngestion: true, SupportedFormats: []string{".txt", ".pdf", ".mp4"},
+		MaxBytesByFormat: map[string]int64{".pdf": 25 << 20, ".mp4": 500 << 20}, MaxMediaDurationSeconds: 7200,
+	})
 	router := gin.New()
 	router.GET("/api/capabilities", handler.Get)
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/capabilities", nil))
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"rag_query"`) || strings.Contains(response.Body.String(), "input_schema") {
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"rag_query"`) || strings.Contains(response.Body.String(), "input_schema") ||
+		!strings.Contains(response.Body.String(), `"async_ingestion":true`) || !strings.Contains(response.Body.String(), `"media_ingestion":true`) ||
+		!strings.Contains(response.Body.String(), `".pdf":26214400`) || !strings.Contains(response.Body.String(), `".mp4":524288000`) ||
+		!strings.Contains(response.Body.String(), `"max_media_duration_seconds":7200`) {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
 }

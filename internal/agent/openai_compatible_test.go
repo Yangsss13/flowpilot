@@ -47,18 +47,25 @@ func TestOpenAICompatibleProviderPlan(t *testing.T) {
 }
 
 func TestOpenAICompatibleProviderDecide(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+	var received chatCompletionRequest
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if err := json.NewDecoder(request.Body).Decode(&received); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
 		writeChatResponse(t, writer, `{"action":"finish","final_answer":"done"}`)
 	}))
 	defer server.Close()
 
 	provider := newTestOpenAICompatibleProvider(t, server.URL, server.Client())
-	decision, err := provider.Decide(context.Background(), AgentState{Goal: "goal"})
+	decision, err := provider.Decide(context.Background(), AgentState{Goal: "goal", DecisionFeedback: "step already succeeded"})
 	if err != nil {
 		t.Fatalf("Decide() returned error: %v", err)
 	}
 	if decision.Action != DecisionFinish || decision.FinalAnswer != "done" {
 		t.Fatalf("Decide() = %#v", decision)
+	}
+	if len(received.Messages) != 2 || !strings.Contains(received.Messages[0].Content, "Never continue a succeeded step") || !strings.Contains(received.Messages[1].Content, "decision_feedback") {
+		t.Fatalf("unexpected decision messages: %#v", received.Messages)
 	}
 }
 

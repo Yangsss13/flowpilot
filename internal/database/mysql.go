@@ -60,6 +60,10 @@ func Migrate(db *gorm.DB) error {
 		&domain.Task{},
 		&domain.TaskStep{},
 		&domain.ExecutionLog{},
+		&domain.Document{},
+		&domain.DocumentVersion{},
+		&domain.IngestionJob{},
+		&domain.DocumentArtifact{},
 	); err != nil {
 		return fmt.Errorf("migrate mysql schema: %w", err)
 	}

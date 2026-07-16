@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"reflect"
 	"testing"
 	"time"
 
@@ -71,13 +72,34 @@ func TestExecutionTransitionsWithMySQL(t *testing.T) {
 	); err != nil {
 		t.Fatalf("transition step: %v", err)
 	}
+	observation := json.RawMessage(`{"query":"架构","results":[{"source":"README.md","text":"FlowPilot","score":0.9}]}`)
+	if err := executionRepository.CompleteWorkflowStep(
+		context.Background(), task.ID, stepID, observation,
+		domain.LogLevelInfo, "step succeeded",
+	); err != nil {
+		t.Fatalf("complete workflow step: %v", err)
+	}
+	loaded, err := NewGormTaskRepository(db).GetByID(context.Background(), task.ID)
+	if err != nil || len(loaded.Steps) != 1 || loaded.Steps[0].Status != domain.StatusSuccess {
+		t.Fatalf("completed step=%#v error=%v", loaded, err)
+	}
+	var gotObservation, wantObservation any
+	if err := json.Unmarshal(loaded.Steps[0].Observation, &gotObservation); err != nil {
+		t.Fatalf("decode stored observation: %v", err)
+	}
+	if err := json.Unmarshal(observation, &wantObservation); err != nil {
+		t.Fatalf("decode expected observation: %v", err)
+	}
+	if !reflect.DeepEqual(gotObservation, wantObservation) {
+		t.Fatalf("stored observation=%s want=%s", loaded.Steps[0].Observation, observation)
+	}
 
 	var logs []domain.ExecutionLog
 	if err := db.Where("task_id = ?", task.ID).Order("id ASC").Find(&logs).Error; err != nil {
 		t.Fatalf("query transition logs: %v", err)
 	}
-	if len(logs) != 2 {
-		t.Fatalf("log count = %d, want 2", len(logs))
+	if len(logs) != 3 {
+		t.Fatalf("log count = %d, want 3", len(logs))
 	}
 	if logs[0].StepID != nil {
 		t.Fatalf("task log step_id = %v, want nil", *logs[0].StepID)

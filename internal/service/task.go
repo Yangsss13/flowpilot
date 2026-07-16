@@ -73,11 +73,13 @@ type TaskStatsResult struct {
 }
 
 type TaskService struct {
-	repository repository.TaskRepository
+	repository      repository.TaskRepository
+	ragQueryEnabled bool
 }
 
-func NewTaskService(repository repository.TaskRepository) *TaskService {
-	return &TaskService{repository: repository}
+func NewTaskService(repository repository.TaskRepository, ragQueryEnabled ...bool) *TaskService {
+	enabled := len(ragQueryEnabled) > 0 && ragQueryEnabled[0]
+	return &TaskService{repository: repository, ragQueryEnabled: enabled}
 }
 
 func (s *TaskService) Create(ctx context.Context, input CreateTaskInput) (*domain.Task, error) {
@@ -108,7 +110,7 @@ func (s *TaskService) Create(ctx context.Context, input CreateTaskInput) (*domai
 	}
 
 	for i, inputStep := range input.Steps {
-		step, err := buildPendingStep(i, inputStep)
+		step, err := buildPendingStep(i, inputStep, s.ragQueryEnabled)
 		if err != nil {
 			return nil, err
 		}
@@ -200,7 +202,7 @@ func (s *TaskService) Delete(ctx context.Context, id uint64) error {
 	return nil
 }
 
-func buildPendingStep(index int, input CreateTaskStepInput) (domain.TaskStep, error) {
+func buildPendingStep(index int, input CreateTaskStepInput, ragQueryEnabled bool) (domain.TaskStep, error) {
 	name := strings.TrimSpace(input.Name)
 	if name == "" {
 		return domain.TaskStep{}, fmt.Errorf("%w: step %d name is required", ErrInvalidInput, index+1)
@@ -212,7 +214,7 @@ func buildPendingStep(index int, input CreateTaskStepInput) (domain.TaskStep, er
 		return domain.TaskStep{}, fmt.Errorf("%w: step %d action payload must be between 1 and %d bytes", ErrInvalidInput, index+1, MaxActionPayloadBytes)
 	}
 	actionType := strings.TrimSpace(input.ActionType)
-	if err := action.Validate(actionType, input.ActionPayload); err != nil {
+	if err := action.Validate(actionType, input.ActionPayload, action.Capabilities{RAGQuery: ragQueryEnabled}); err != nil {
 		return domain.TaskStep{}, fmt.Errorf("%w: step %d action is invalid: %v", ErrInvalidInput, index+1, err)
 	}
 

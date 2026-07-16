@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -58,11 +59,27 @@ func (p *Planner) Replan(ctx context.Context, state AgentState, reason string) (
 
 func (p *Planner) Decide(ctx context.Context, state AgentState) (Decision, error) {
 	decision, err := p.provider.Decide(ctx, state)
-	if err != nil {
+	if err == nil {
+		err = p.validator.ValidateDecision(decision, state)
+	}
+	if err == nil {
+		return decision, nil
+	}
+	if !errors.Is(err, ErrInvalidDecision) {
 		return Decision{}, fmt.Errorf("generate decision: %w", err)
 	}
-	if err := p.validator.ValidateDecision(decision, state); err != nil {
-		return Decision{}, err
+
+	// Model-compatible JSON mode guarantees syntax, not business validity. Give
+	// the model one bounded chance to correct a rejected decision with the
+	// deterministic validator's reason; never loop indefinitely.
+	repairState := state
+	repairState.DecisionFeedback = err.Error()
+	repaired, repairErr := p.provider.Decide(ctx, repairState)
+	if repairErr != nil {
+		return Decision{}, fmt.Errorf("repair invalid decision: %w", repairErr)
 	}
-	return decision, nil
+	if repairErr := p.validator.ValidateDecision(repaired, state); repairErr != nil {
+		return Decision{}, fmt.Errorf("repair invalid decision: %w", repairErr)
+	}
+	return repaired, nil
 }

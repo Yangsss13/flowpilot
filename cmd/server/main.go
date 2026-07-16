@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"github.com/Yangsss13/flowpilot/internal/executor"
 	"github.com/Yangsss13/flowpilot/internal/handler"
 	"github.com/Yangsss13/flowpilot/internal/httpapi"
+	"github.com/Yangsss13/flowpilot/internal/knowledge"
 	"github.com/Yangsss13/flowpilot/internal/rag"
 	"github.com/Yangsss13/flowpilot/internal/repository"
 	"github.com/Yangsss13/flowpilot/internal/service"
@@ -26,6 +28,13 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "knowledge-parse" {
+		if err := knowledge.RunParserCommand(os.Stdin, os.Stdout); err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, "knowledge parser failed")
+			os.Exit(1)
+		}
+		return
+	}
 	cfg := config.Load()
 
 	db, err := database.OpenMySQL(cfg.Database)
@@ -53,13 +62,17 @@ func main() {
 
 	taskRepository := repository.NewGormTaskRepository(db)
 	executionRepository := repository.NewGormExecutionRepository(db)
-	taskService := service.NewTaskService(taskRepository)
 	qdrantStore, err := rag.NewQdrantStore(cfg.Qdrant.URL, cfg.Qdrant.Collection, cfg.Qdrant.APIKey, nil)
 	if err != nil {
 		log.Fatalf("configure Qdrant: %v", err)
 	}
 	var ragService *rag.Service
 	var knowledgeHandler *handler.KnowledgeHandler
+	var knowledgePublisher *knowledge.RabbitPublisher
+	var knowledgeConsumer *knowledge.Consumer
+	var knowledgeDispatcher *knowledge.Dispatcher
+	var knowledgeToolSearcher agent.RAGSearcher
+	mediaEnabled := false
 	if cfg.AI.EmbeddingModel == "" {
 		log.Println("Knowledge API disabled: set AI_API_KEY and AI_EMBEDDING_MODEL to enable it")
 	} else {
@@ -71,9 +84,50 @@ func main() {
 			log.Fatalf("start Knowledge API embedder: %v", err)
 		}
 		ragService = rag.NewService(embedder, qdrantStore)
-		knowledgeHandler = handler.NewKnowledgeHandler(ragService)
+		knowledgeStorage, err := knowledge.NewLocalObjectStorage(cfg.Knowledge.StorageDir)
+		if err != nil {
+			log.Fatalf("start Knowledge object storage: %v", err)
+		}
+		knowledgeRepository := knowledge.NewGormRepository(db)
+		knowledgePublisher, err = knowledge.NewRabbitPublisher(rabbitConnection)
+		if err != nil {
+			log.Fatalf("start Knowledge publisher: %v", err)
+		}
+		defer knowledgePublisher.Close()
+		knowledgeParser, err := knowledge.NewSubprocessParser()
+		if err != nil {
+			log.Fatalf("start Knowledge parser: %v", err)
+		}
+		var mediaPipeline *knowledge.MediaPipeline
+		if err := knowledge.CheckMediaRuntime(cfg.Knowledge); err != nil {
+			log.Printf("Media ingestion disabled: %v", err)
+		} else {
+			mediaEnabled = true
+			mediaProcessor := knowledge.NewFFmpegProcessor(cfg.Knowledge, nil)
+			transcriber := knowledge.NewWhisperCPPTranscriber(cfg.Knowledge, nil)
+			ocr := knowledge.NewTesseractOCR(cfg.Knowledge, nil)
+			mediaPipeline = knowledge.NewMediaPipeline(knowledgeStorage, knowledgeRepository, mediaProcessor, transcriber, ocr, cfg.Knowledge)
+		}
+		knowledgeWorker := knowledge.NewWorker(knowledgeRepository, knowledgeStorage, knowledgeParser, ragService, cfg.Knowledge, mediaPipeline)
+		knowledgeConsumer = knowledge.NewConsumer(rabbitConnection, knowledgeWorker)
+		if err := knowledgeConsumer.Start(context.Background(), cfg.Knowledge.WorkerCount); err != nil {
+			log.Fatalf("start Knowledge consumer: %v", err)
+		}
+		knowledgeDispatcher = knowledge.NewDispatcher(knowledgeRepository, knowledgePublisher, knowledgeWorker, cfg.Knowledge.DispatchInterval)
+		if err := knowledgeDispatcher.Start(context.Background()); err != nil {
+			log.Fatalf("start Knowledge dispatcher: %v", err)
+		}
+		knowledgeService := knowledge.NewService(knowledgeRepository, knowledgeStorage, knowledgePublisher, ragService, cfg.Knowledge, mediaEnabled)
+		knowledgeToolSearcher = knowledge.NewAgentSearcher(knowledgeService)
+		var maxUploadBytes int64
+		for _, maximum := range cfg.Knowledge.MaxBytesByFormat {
+			if maximum > maxUploadBytes {
+				maxUploadBytes = maximum
+			}
+		}
+		knowledgeHandler = handler.NewKnowledgeHandler(knowledgeService, maxUploadBytes)
 	}
-	toolRegistry, err := agent.NewToolRegistry(ragService, cfg.AI.HTTPAllowedHosts, nil)
+	toolRegistry, err := agent.NewToolRegistry(knowledgeToolSearcher, cfg.AI.HTTPAllowedHosts, nil)
 	if err != nil {
 		log.Fatalf("configure Agent tools: %v", err)
 	}
@@ -97,7 +151,12 @@ func main() {
 		}
 		planner = agent.NewPlanner(provider, toolDefinitions, validator)
 	}
-	stepExecutor := executor.NewStepExecutor()
+	taskService := service.NewTaskService(taskRepository, ragService != nil)
+	var workflowSearcher executor.WorkflowSearcher
+	if ragService != nil {
+		workflowSearcher = ragService
+	}
+	stepExecutor := executor.NewStepExecutor(workflowSearcher)
 	taskExecutor := executor.NewTaskExecutor(taskRepository, executionRepository, stepExecutor)
 	var agentRunner executor.TaskRunner
 	var agentHandler *handler.AgentHandler
@@ -139,7 +198,20 @@ func main() {
 	executionService := service.NewExecutionService(taskRepository, executionRepository, taskPublisher)
 	taskHandler := handler.NewTaskHandler(taskService)
 	executionHandler := handler.NewExecutionHandler(executionService)
-	capabilityHandler := handler.NewCapabilityHandler(planner != nil, toolDefinitions, knowledgeHandler != nil)
+	knowledgeFormats := []string{".txt", ".md", ".pdf", ".docx", ".pptx"}
+	if mediaEnabled {
+		knowledgeFormats = append(knowledgeFormats, ".mp3", ".wav", ".m4a", ".mp4", ".mov", ".webm")
+	}
+	knowledgeLimits := make(map[string]int64, len(knowledgeFormats))
+	for _, format := range knowledgeFormats {
+		knowledgeLimits[format] = cfg.Knowledge.MaxBytesByFormat[format]
+	}
+	knowledgeCapability := handler.KnowledgeCapability{
+		AsyncIngestion: true, MediaIngestion: mediaEnabled,
+		SupportedFormats: knowledgeFormats, MaxBytesByFormat: knowledgeLimits,
+		MaxMediaDurationSeconds: int64(cfg.Knowledge.MaxMediaDuration.Seconds()),
+	}
+	capabilityHandler := handler.NewCapabilityHandler(planner != nil, toolDefinitions, knowledgeHandler != nil, knowledgeCapability)
 	sqlDB, err := db.DB()
 	if err != nil {
 		log.Fatalf("get MySQL pool for readiness: %v", err)
@@ -171,6 +243,9 @@ func main() {
 			return nil
 		}
 	}
+	if mediaEnabled {
+		readinessChecks["media"] = func(context.Context) error { return knowledge.CheckMediaRuntime(cfg.Knowledge) }
+	}
 	healthHandler := handler.NewHealthHandler(readinessChecks)
 	router := httpapi.NewRouter(taskHandler, executionHandler, agentHandler, knowledgeHandler, capabilityHandler, healthHandler)
 
@@ -201,6 +276,20 @@ func main() {
 		log.Printf("shutdown HTTP server: %v", err)
 	}
 	cancelHTTPShutdown()
+	if knowledgeDispatcher != nil {
+		dispatcherShutdownCtx, cancelDispatcherShutdown := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := knowledgeDispatcher.Stop(dispatcherShutdownCtx); err != nil {
+			log.Printf("shutdown Knowledge dispatcher: %v", err)
+		}
+		cancelDispatcherShutdown()
+	}
+	if knowledgeConsumer != nil {
+		knowledgeShutdownCtx, cancelKnowledgeShutdown := context.WithTimeout(context.Background(), 10*time.Second)
+		if err := knowledgeConsumer.Stop(knowledgeShutdownCtx); err != nil {
+			log.Printf("shutdown Knowledge consumer: %v", err)
+		}
+		cancelKnowledgeShutdown()
+	}
 	consumerShutdownCtx, cancelConsumerShutdown := context.WithTimeout(context.Background(), 5*time.Second)
 	if err := consumer.Stop(consumerShutdownCtx); err != nil {
 		log.Printf("shutdown RabbitMQ consumer: %v", err)

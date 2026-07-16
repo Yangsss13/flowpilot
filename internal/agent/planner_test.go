@@ -12,6 +12,8 @@ type fakeChatProvider struct {
 	planErr     error
 	decision    Decision
 	decisionErr error
+	decisions   []Decision
+	states      []AgentState
 	request     PlanRequest
 	tools       []ToolDefinition
 }
@@ -22,7 +24,13 @@ func (f *fakeChatProvider) Plan(_ context.Context, request PlanRequest, tools []
 	return f.plan, f.planErr
 }
 
-func (f *fakeChatProvider) Decide(_ context.Context, _ AgentState) (Decision, error) {
+func (f *fakeChatProvider) Decide(_ context.Context, state AgentState) (Decision, error) {
+	f.states = append(f.states, state)
+	if len(f.decisions) > 0 {
+		decision := f.decisions[0]
+		f.decisions = f.decisions[1:]
+		return decision, nil
+	}
 	return f.decision, f.decisionErr
 }
 
@@ -74,6 +82,36 @@ func TestPlannerValidatesDecision(t *testing.T) {
 	}
 	if decision.Action != DecisionFinish {
 		t.Fatalf("decision action = %q, want finish", decision.Action)
+	}
+}
+
+func TestPlannerRepairsInvalidDecisionOnce(t *testing.T) {
+	provider := &fakeChatProvider{decisions: []Decision{
+		{Action: DecisionContinue, NextStepID: "step-1"},
+		{Action: DecisionFinish, FinalAnswer: "grounded answer"},
+	}}
+	planner := NewPlanner(provider, DefaultToolDefinitions(), newTestValidator(t))
+	state := AgentState{
+		Plan:         Plan{Steps: []PlanStep{{ID: "step-1"}}},
+		Observations: []Observation{{StepID: "step-1", Output: json.RawMessage(`{"ok":true}`)}},
+	}
+	decision, err := planner.Decide(context.Background(), state)
+	if err != nil {
+		t.Fatalf("Decide() returned error: %v", err)
+	}
+	if decision.Action != DecisionFinish || len(provider.states) != 2 || provider.states[1].DecisionFeedback == "" {
+		t.Fatalf("decision=%#v states=%#v", decision, provider.states)
+	}
+}
+
+func TestPlannerDoesNotRetryTransportDecisionError(t *testing.T) {
+	provider := &fakeChatProvider{decisionErr: errors.New("model unavailable")}
+	planner := NewPlanner(provider, DefaultToolDefinitions(), newTestValidator(t))
+	if _, err := planner.Decide(context.Background(), AgentState{}); err == nil {
+		t.Fatal("Decide() returned nil error")
+	}
+	if len(provider.states) != 1 {
+		t.Fatalf("provider calls = %d, want 1", len(provider.states))
 	}
 }
 

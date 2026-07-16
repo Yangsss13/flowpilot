@@ -109,6 +109,9 @@ func (v *Validator) ValidateDecision(decision Decision, state AgentState) error 
 		if !planHasStep(state.Plan, decision.NextStepID) {
 			return fmt.Errorf("%w: next_step_id %q is not in the plan", ErrInvalidDecision, decision.NextStepID)
 		}
+		if hasSuccessfulObservation(state.Observations, decision.NextStepID) {
+			return fmt.Errorf("%w: next_step_id %q already has a successful observation", ErrInvalidDecision, decision.NextStepID)
+		}
 	case DecisionReplan:
 		if state.ReplanCount >= MaxReplans {
 			return fmt.Errorf("%w: replan limit %d reached", ErrInvalidDecision, MaxReplans)

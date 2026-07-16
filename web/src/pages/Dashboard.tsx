@@ -16,6 +16,7 @@ export default function Dashboard({ capabilities }: { capabilities: Capabilities
   const recent = [...tasks].sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at)).slice(0, 6)
   const agentAvailable = capabilities?.agent_enabled !== false
   const knowledgeAvailable = capabilities?.knowledge_enabled !== false
+  const knowledgeHint = capabilities?.knowledge?.media_ingestion ? '上传文档、音频与视频' : '上传多格式文档资料'
   const refreshAll = () => { void refresh(); void refreshStats() }
   return <>
     <PageHeader eyebrow="CONTROL PLANE" title="工作流总览" description="从一个清晰的控制面，掌握 Agent 计划、任务执行与知识检索。" action={agentAvailable ? <Link className="button button-primary" to="/agent/new"><Bot size={17} />创建 Agent</Link> : undefined} />
@@ -28,7 +29,7 @@ export default function Dashboard({ capabilities }: { capabilities: Capabilities
         <Panel className="quick-panel"><span className="eyebrow">QUICK START</span><h2>下一步操作</h2><p>从目标规划或知识导入开始，快速跑通一次完整演示。</p>
           {agentAvailable && <Link className="quick-action" to="/agent/new"><span><Bot size={20} /></span><div><strong>创建 Agent</strong><small>生成受约束的工具计划</small></div><ArrowRight size={16} /></Link>}
           <Link className="quick-action" to="/workflow/new"><span><GitBranch size={20} /></span><div><strong>创建 Workflow</strong><small>配置确定性的顺序步骤</small></div><ArrowRight size={16} /></Link>
-          {knowledgeAvailable && <Link className="quick-action" to="/knowledge"><span><BookOpen size={20} /></span><div><strong>导入知识</strong><small>上传 .txt / .md 资料</small></div><ArrowRight size={16} /></Link>}
+          {knowledgeAvailable && <Link className="quick-action" to="/knowledge"><span><BookOpen size={20} /></span><div><strong>导入知识</strong><small>{knowledgeHint}</small></div><ArrowRight size={16} /></Link>}
           <div className="guardrail"><span>安全边界</span><p>模型凭据只由后端环境变量读取，不会进入浏览器。</p></div>
         </Panel>
       </div>

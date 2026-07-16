@@ -54,7 +54,7 @@ export const api = {
   getTask: (id: number) => request<Task>(`/api/tasks/${id}`),
   deleteTask: (id: number) => request<void>(`/api/tasks/${id}`, { method: 'DELETE' }),
   getLogs: (id: number) => request<ExecutionLog[]>(`/api/tasks/${id}/logs`),
-  createWorkflow: (input: { name: string; description: string; steps: Array<{ name: string; action_type: string; action_payload: Record<string, number> }> }) => request<Task>('/api/tasks', {
+  createWorkflow: (input: { name: string; description: string; steps: Array<{ name: string; action_type: string; action_payload: Record<string, unknown> }> }) => request<Task>('/api/tasks', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input),
   }),
   createAgent: (input: { goal: string; name?: string }) => request<Task>('/api/agent/tasks', {

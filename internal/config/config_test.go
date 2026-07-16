@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestLoadAIConfig(t *testing.T) {
 	t.Setenv("AI_BASE_URL", "https://example.com/v1")
@@ -44,5 +47,30 @@ func TestLoadUsesLocalCheckpointDirByDefault(t *testing.T) {
 	config := Load()
 	if config.Checkpoint.Dir != "./data/checkpoints" {
 		t.Fatalf("checkpoint dir = %q", config.Checkpoint.Dir)
+	}
+}
+
+func TestLoadKnowledgeLimitsAreConfigurable(t *testing.T) {
+	t.Setenv("KNOWLEDGE_MAX_PDF_BYTES", "12345")
+	t.Setenv("KNOWLEDGE_MAX_PPT_SLIDES", "42")
+	t.Setenv("KNOWLEDGE_PARSE_TIMEOUT", "12s")
+	t.Setenv("KNOWLEDGE_SEARCH_MIN_SCORE", "0.65")
+	config := Load()
+	if config.Knowledge.MaxBytesByFormat[".pdf"] != 12345 || config.Knowledge.MaxPPTSlides != 42 ||
+		config.Knowledge.ParseTimeout.String() != "12s" || config.Knowledge.SearchMinScore != 0.65 {
+		t.Fatalf("Knowledge config = %#v", config.Knowledge)
+	}
+}
+
+func TestLoadMediaIngestionConfig(t *testing.T) {
+	t.Setenv("KNOWLEDGE_MAX_MP4_BYTES", "123456")
+	t.Setenv("KNOWLEDGE_MAX_MEDIA_DURATION", "30m")
+	t.Setenv("KNOWLEDGE_MEDIA_CONCURRENCY", "2")
+	t.Setenv("WHISPER_MODEL_PATH", "model.bin")
+	t.Setenv("OCR_LANGUAGES", "chi_sim+eng")
+	config := Load()
+	if config.Knowledge.MaxBytesByFormat[".mp4"] != 123456 || config.Knowledge.MaxMediaDuration != 30*time.Minute ||
+		config.Knowledge.MediaConcurrency != 2 || config.Knowledge.WhisperModelPath != "model.bin" || config.Knowledge.OCRLanguages != "chi_sim+eng" {
+		t.Fatalf("media config = %#v", config.Knowledge)
 	}
 }

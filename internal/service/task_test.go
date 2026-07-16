@@ -168,6 +168,23 @@ func TestTaskServiceCreateWrapsRepositoryError(t *testing.T) {
 	}
 }
 
+func TestTaskServiceRAGQueryRequiresRuntimeCapability(t *testing.T) {
+	input := CreateTaskInput{Name: "knowledge workflow", Steps: []CreateTaskStepInput{{
+		Name: "search", ActionType: "rag_query", ActionPayload: json.RawMessage(`{"query":"项目技术栈","top_k":3,"min_score":0.5}`),
+	}}}
+
+	disabledRepository := &fakeTaskRepository{}
+	if _, err := NewTaskService(disabledRepository).Create(context.Background(), input); !errors.Is(err, ErrInvalidInput) || disabledRepository.calls != 0 {
+		t.Fatalf("disabled capability error=%v repository calls=%d", err, disabledRepository.calls)
+	}
+
+	enabledRepository := &fakeTaskRepository{}
+	task, err := NewTaskService(enabledRepository, true).Create(context.Background(), input)
+	if err != nil || enabledRepository.calls != 1 || task.Steps[0].ActionType != "rag_query" {
+		t.Fatalf("enabled capability task=%#v error=%v calls=%d", task, err, enabledRepository.calls)
+	}
+}
+
 func TestTaskServiceCreateValidatesFieldBoundaries(t *testing.T) {
 	manySteps := make([]CreateTaskStepInput, MaxWorkflowSteps+1)
 	for index := range manySteps {

@@ -33,6 +33,13 @@ func NewRouter(
 	}
 	if knowledgeHandler != nil {
 		api.POST("/knowledge/documents", knowledgeHandler.Import)
+		api.POST("/knowledge/documents/:id/versions", knowledgeHandler.UploadVersion)
+		api.GET("/knowledge/documents", knowledgeHandler.List)
+		api.GET("/knowledge/documents/:id", knowledgeHandler.Get)
+		api.DELETE("/knowledge/documents/:id", knowledgeHandler.Delete)
+		api.GET("/knowledge/jobs/:id", knowledgeHandler.GetJob)
+		api.POST("/knowledge/jobs/:id/retry", knowledgeHandler.Retry)
+		api.POST("/knowledge/jobs/:id/cancel", knowledgeHandler.Cancel)
 		api.POST("/knowledge/search", knowledgeHandler.Search)
 	}
 

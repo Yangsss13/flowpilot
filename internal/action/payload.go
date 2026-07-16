@@ -6,10 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const MaxMockSleep = 30 * time.Second
+const MaxRAGQueryRunes = 2000
 
 type SleepPayload struct {
 	DurationMS int `json:"duration_ms"`
@@ -23,7 +26,17 @@ type ShellMockPayload struct {
 	ExitCode int `json:"exit_code"`
 }
 
-func Validate(actionType string, payload json.RawMessage) error {
+type RAGQueryPayload struct {
+	Query    string  `json:"query"`
+	TopK     int     `json:"top_k,omitempty"`
+	MinScore float64 `json:"min_score,omitempty"`
+}
+
+type Capabilities struct {
+	RAGQuery bool
+}
+
+func Validate(actionType string, payload json.RawMessage, capabilities ...Capabilities) error {
 	switch actionType {
 	case "sleep":
 		_, err := ParseSleep(payload)
@@ -34,9 +47,36 @@ func Validate(actionType string, payload json.RawMessage) error {
 	case "shell_mock":
 		_, err := ParseShellMock(payload)
 		return err
+	case "rag_query":
+		if len(capabilities) == 0 || !capabilities[0].RAGQuery {
+			return fmt.Errorf("rag_query is not available")
+		}
+		_, err := ParseRAGQuery(payload)
+		return err
 	default:
 		return fmt.Errorf("unsupported action type %q", actionType)
 	}
+}
+
+func ParseRAGQuery(payload json.RawMessage) (RAGQueryPayload, error) {
+	var input RAGQueryPayload
+	if err := decodeStrictPayload(payload, &input); err != nil {
+		return RAGQueryPayload{}, fmt.Errorf("decode rag_query payload: %w", err)
+	}
+	input.Query = strings.TrimSpace(input.Query)
+	if input.Query == "" {
+		return RAGQueryPayload{}, fmt.Errorf("rag_query query is required")
+	}
+	if utf8.RuneCountInString(input.Query) > MaxRAGQueryRunes {
+		return RAGQueryPayload{}, fmt.Errorf("rag_query query must not exceed %d characters", MaxRAGQueryRunes)
+	}
+	if input.TopK < 0 || input.TopK > 10 {
+		return RAGQueryPayload{}, fmt.Errorf("rag_query top_k must be between 1 and 10 when provided")
+	}
+	if input.MinScore < 0 || input.MinScore > 1 {
+		return RAGQueryPayload{}, fmt.Errorf("rag_query min_score must be between 0 and 1")
+	}
+	return input, nil
 }
 
 func ParseSleep(payload json.RawMessage) (SleepPayload, error) {

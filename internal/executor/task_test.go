@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -25,8 +26,27 @@ type transitionEvent struct {
 }
 
 type fakeExecutionStateStore struct {
-	events []transitionEvent
-	err    error
+	events       []transitionEvent
+	observations map[uint64]json.RawMessage
+	err          error
+}
+
+func (f *fakeExecutionStateStore) CompleteWorkflowStep(ctx context.Context, _ uint64, stepID uint64, observation json.RawMessage, _ domain.LogLevel, _ string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	f.events = append(f.events, transitionEvent{kind: "step", id: stepID, current: domain.StatusRunning, next: domain.StatusSuccess})
+	if f.err != nil {
+		return f.err
+	}
+	if !json.Valid(observation) {
+		return errors.New("invalid observation")
+	}
+	if f.observations == nil {
+		f.observations = make(map[uint64]json.RawMessage)
+	}
+	f.observations[stepID] = append(json.RawMessage(nil), observation...)
+	return nil
 }
 
 func (f *fakeExecutionStateStore) TransitionTask(ctx context.Context, taskID uint64, current, next domain.Status, _ domain.LogLevel, _ string) error {
@@ -60,17 +80,17 @@ type cancellingStepRunner struct {
 	cancel context.CancelFunc
 }
 
-func (r *cancellingStepRunner) Execute(_ context.Context, _ domain.TaskStep) error {
+func (r *cancellingStepRunner) Execute(_ context.Context, _ domain.TaskStep) (json.RawMessage, error) {
 	r.cancel()
-	return context.Canceled
+	return nil, context.Canceled
 }
 
-func (f *fakeStepRunner) Execute(_ context.Context, step domain.TaskStep) error {
+func (f *fakeStepRunner) Execute(_ context.Context, step domain.TaskStep) (json.RawMessage, error) {
 	f.calls = append(f.calls, step.ID)
 	if step.ID == f.failID {
-		return errors.New("mock action failed")
+		return nil, errors.New("mock action failed")
 	}
-	return nil
+	return json.RawMessage(`{"ok":true}`), nil
 }
 
 func TestTaskExecutorExecuteSuccess(t *testing.T) {
@@ -100,6 +120,9 @@ func TestTaskExecutorExecuteSuccess(t *testing.T) {
 	if !equalEvents(states.events, wantEvents) {
 		t.Fatalf("events = %#v, want %#v", states.events, wantEvents)
 	}
+	if len(states.observations) != 3 || string(states.observations[12]) != `{"ok":true}` {
+		t.Fatalf("observations = %#v, want persisted output for every step", states.observations)
+	}
 }
 
 func TestTaskExecutorStopsAfterFirstFailedStep(t *testing.T) {
@@ -123,6 +146,29 @@ func TestTaskExecutorStopsAfterFirstFailedStep(t *testing.T) {
 	for _, event := range states.events {
 		if event.id == 13 {
 			t.Fatalf("third step unexpectedly transitioned: %#v", event)
+		}
+	}
+}
+
+func TestTaskExecutorStopsAfterRAGFailure(t *testing.T) {
+	task := pendingTask()
+	task.Steps = []domain.TaskStep{
+		{ID: 11, StepOrder: 1, Status: domain.StatusPending, ActionType: "rag_query", ActionPayload: json.RawMessage(`{"query":"项目架构"}`)},
+		{ID: 12, StepOrder: 2, Status: domain.StatusPending, ActionType: "sleep", ActionPayload: json.RawMessage(`{"duration_ms":1}`)},
+	}
+	states := &fakeExecutionStateStore{}
+	searcher := &fakeWorkflowSearcher{err: errors.New("knowledge unavailable")}
+	executor := NewTaskExecutor(&fakeTaskSource{task: task}, states, NewStepExecutor(searcher))
+
+	if err := executor.Execute(context.Background(), task.ID); err == nil {
+		t.Fatal("Execute() returned nil, want RAG failure")
+	}
+	if searcher.calls != 1 {
+		t.Fatalf("RAG calls = %d, want 1", searcher.calls)
+	}
+	for _, event := range states.events {
+		if event.kind == "step" && event.id == 12 {
+			t.Fatalf("step after failed RAG unexpectedly transitioned: %#v", event)
 		}
 	}
 }

@@ -81,7 +81,7 @@ export interface ExecutionLog {
   created_at: string
 }
 
-export type DocumentStatus = 'Queued' | 'Processing' | 'Ready' | 'Failed' | 'Deleting'
+export type DocumentStatus = 'Queued' | 'Processing' | 'Ready' | 'Failed' | 'Canceled' | 'Deleting'
 export type IngestionJobStatus = 'Queued' | 'Running' | 'Success' | 'Failed' | 'Canceled'
 export type IngestionStage = 'upload' | 'probe' | 'extract_audio' | 'transcribe' | 'keyframes' | 'ocr' | 'merge' | 'parse' | 'chunk' | 'embedding' | 'indexing'
 

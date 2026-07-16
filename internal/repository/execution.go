@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -15,6 +16,47 @@ var ErrStateConflict = errors.New("state conflict")
 type ExecutionRepository interface {
 	TransitionTask(ctx context.Context, taskID uint64, current, next domain.Status, level domain.LogLevel, message string) error
 	TransitionStep(ctx context.Context, taskID, stepID uint64, current, next domain.Status, level domain.LogLevel, message string) error
+	CompleteWorkflowStep(ctx context.Context, taskID, stepID uint64, observation json.RawMessage, level domain.LogLevel, message string) error
+}
+
+// CompleteWorkflowStep persists the output and Running -> Success transition
+// in one transaction. A successful workflow step must never lose the output
+// that explains what the real action produced.
+func (r *GormExecutionRepository) CompleteWorkflowStep(
+	ctx context.Context,
+	taskID, stepID uint64,
+	observation json.RawMessage,
+	level domain.LogLevel,
+	message string,
+) error {
+	if err := domain.ValidateTransition(domain.StatusRunning, domain.StatusSuccess); err != nil {
+		return fmt.Errorf("validate step transition: %w", err)
+	}
+	if len(observation) == 0 || !json.Valid(observation) {
+		return fmt.Errorf("workflow step observation must be valid JSON")
+	}
+
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&domain.TaskStep{}).
+			Where("id = ? AND task_id = ? AND status = ?", stepID, taskID, domain.StatusRunning).
+			Updates(map[string]any{"status": domain.StatusSuccess, "observation": observation})
+		if result.Error != nil {
+			return fmt.Errorf("complete workflow step: %w", result.Error)
+		}
+		if result.RowsAffected != 1 {
+			return ErrStateConflict
+		}
+
+		logEntry := domain.ExecutionLog{TaskID: taskID, StepID: &stepID, Level: level, Message: message}
+		if err := tx.Create(&logEntry).Error; err != nil {
+			return fmt.Errorf("create step transition log: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("complete workflow step: %w", err)
+	}
+	return nil
 }
 
 type GormExecutionRepository struct {

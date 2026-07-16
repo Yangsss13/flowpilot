@@ -91,7 +91,8 @@ func TestValidatorValidatesDecision(t *testing.T) {
 		state    AgentState
 		wantErr  bool
 	}{
-		{name: "continue", decision: Decision{Action: DecisionContinue, NextStepID: "step-1"}, state: state},
+		{name: "continue", decision: Decision{Action: DecisionContinue, NextStepID: "step-1"}, state: AgentState{Plan: state.Plan}},
+		{name: "continue completed step", decision: Decision{Action: DecisionContinue, NextStepID: "step-1"}, state: state, wantErr: true},
 		{name: "missing next step", decision: Decision{Action: DecisionContinue}, state: state, wantErr: true},
 		{name: "finish", decision: Decision{Action: DecisionFinish, FinalAnswer: "done"}, state: state},
 		{name: "empty answer", decision: Decision{Action: DecisionFinish}, state: state, wantErr: true},

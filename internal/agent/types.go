@@ -47,10 +47,11 @@ type Observation struct {
 }
 
 type AgentState struct {
-	Goal         string        `json:"goal"`
-	Plan         Plan          `json:"plan"`
-	Observations []Observation `json:"observations"`
-	ReplanCount  int           `json:"replan_count"`
+	Goal             string        `json:"goal"`
+	Plan             Plan          `json:"plan"`
+	Observations     []Observation `json:"observations"`
+	ReplanCount      int           `json:"replan_count"`
+	DecisionFeedback string        `json:"decision_feedback,omitempty"`
 }
 
 type DecisionAction string

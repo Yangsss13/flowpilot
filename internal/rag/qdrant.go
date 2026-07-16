@@ -26,7 +26,13 @@ type QdrantStore struct {
 
 type qdrantPayload struct {
 	DocumentID string `json:"document_id"`
+	VersionID  uint64 `json:"version_id"`
 	Source     string `json:"source"`
+	Section    string `json:"section,omitempty"`
+	Page       int    `json:"page,omitempty"`
+	Slide      int    `json:"slide,omitempty"`
+	StartMS    int64  `json:"start_ms,omitempty"`
+	EndMS      int64  `json:"end_ms,omitempty"`
 	ChunkIndex int    `json:"chunk_index"`
 	Text       string `json:"text"`
 }
@@ -82,7 +88,13 @@ func (s *QdrantStore) Upsert(ctx context.Context, vectorSize int, points []Vecto
 			Vector: value.Vector,
 			Payload: qdrantPayload{
 				DocumentID: value.DocumentID,
+				VersionID:  value.VersionID,
 				Source:     value.Source,
+				Section:    value.Section,
+				Page:       value.Page,
+				Slide:      value.Slide,
+				StartMS:    value.StartMS,
+				EndMS:      value.EndMS,
 				ChunkIndex: value.ChunkIndex,
 				Text:       value.Text,
 			},
@@ -101,15 +113,24 @@ func (s *QdrantStore) Upsert(ctx context.Context, vectorSize int, points []Vecto
 }
 
 func (s *QdrantStore) Query(ctx context.Context, vector []float32, limit int) ([]SearchResult, error) {
+	return s.QueryWithThreshold(ctx, vector, limit, 0)
+}
+
+func (s *QdrantStore) QueryWithThreshold(ctx context.Context, vector []float32, limit int, minScore float64) ([]SearchResult, error) {
 	if len(vector) == 0 || limit <= 0 {
 		return nil, fmt.Errorf("query vector and positive limit are required")
 	}
-	status, body, err := s.doJSON(ctx, http.MethodPost, s.collectionPath()+"/points/query", struct {
-		Query       []float32 `json:"query"`
-		Limit       int       `json:"limit"`
-		WithPayload bool      `json:"with_payload"`
-		WithVector  bool      `json:"with_vector"`
-	}{Query: vector, Limit: limit, WithPayload: true, WithVector: false})
+	request := struct {
+		Query          []float32 `json:"query"`
+		Limit          int       `json:"limit"`
+		WithPayload    bool      `json:"with_payload"`
+		WithVector     bool      `json:"with_vector"`
+		ScoreThreshold *float64  `json:"score_threshold,omitempty"`
+	}{Query: vector, Limit: limit, WithPayload: true, WithVector: false}
+	if minScore > 0 {
+		request.ScoreThreshold = &minScore
+	}
+	status, body, err := s.doJSON(ctx, http.MethodPost, s.collectionPath()+"/points/query", request)
 	if err != nil {
 		return nil, fmt.Errorf("query Qdrant points: %w", err)
 	}
@@ -129,15 +150,65 @@ func (s *QdrantStore) Query(ctx context.Context, vector []float32, limit int) ([
 	}
 	results := make([]SearchResult, len(response.Result.Points))
 	for index, point := range response.Result.Points {
-		results[index] = SearchResult{
+		result := SearchResult{
 			DocumentID: point.Payload.DocumentID,
+			VersionID:  point.Payload.VersionID,
 			Source:     point.Payload.Source,
+			Section:    point.Payload.Section,
+			Page:       point.Payload.Page,
+			Slide:      point.Payload.Slide,
+			StartMS:    point.Payload.StartMS,
+			EndMS:      point.Payload.EndMS,
 			ChunkIndex: point.Payload.ChunkIndex,
 			Text:       point.Payload.Text,
 			Score:      point.Score,
 		}
+		if point.Payload.EndMS > 0 {
+			result.StartTime = FormatTimestamp(point.Payload.StartMS)
+			result.EndTime = FormatTimestamp(point.Payload.EndMS)
+		}
+		results[index] = result
 	}
 	return results, nil
+}
+
+func FormatTimestamp(milliseconds int64) string {
+	if milliseconds < 0 {
+		milliseconds = 0
+	}
+	totalSeconds := milliseconds / 1000
+	hours := totalSeconds / 3600
+	minutes := (totalSeconds % 3600) / 60
+	seconds := totalSeconds % 60
+	return fmt.Sprintf("%02d:%02d:%02d", hours, minutes, seconds)
+}
+
+func (s *QdrantStore) DeleteDocument(ctx context.Context, documentID string) error {
+	return s.deleteByFilter(ctx, []any{qdrantMatch("document_id", documentID)})
+}
+
+func (s *QdrantStore) DeleteVersion(ctx context.Context, documentID string, versionID uint64) error {
+	return s.deleteByFilter(ctx, []any{qdrantMatch("document_id", documentID), qdrantMatch("version_id", versionID)})
+}
+
+func qdrantMatch(key string, value any) map[string]any {
+	return map[string]any{"key": key, "match": map[string]any{"value": value}}
+}
+
+func (s *QdrantStore) deleteByFilter(ctx context.Context, must []any) error {
+	status, _, err := s.doJSON(ctx, http.MethodPost, s.collectionPath()+"/points/delete?wait=true", map[string]any{
+		"filter": map[string]any{"must": must},
+	})
+	if err != nil {
+		return fmt.Errorf("delete Qdrant points: %w", err)
+	}
+	if status == http.StatusNotFound {
+		return nil
+	}
+	if status < http.StatusOK || status >= http.StatusMultipleChoices {
+		return fmt.Errorf("delete Qdrant points returned HTTP status %d", status)
+	}
+	return nil
 }
 
 func (s *QdrantStore) Health(ctx context.Context) error {

@@ -1,10 +1,36 @@
-import { AlertTriangle, ArrowLeft, Braces, ChevronDown, Clock3, FileText, LoaderCircle, Play, RefreshCw, RotateCcw, Sparkles, TerminalSquare, Trash2, Wrench } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, BookOpen, Braces, ChevronDown, Clock3, FileText, LoaderCircle, Play, RefreshCw, RotateCcw, Sparkles, TerminalSquare, Trash2, Wrench } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { ApiError, api } from '../api'
 import { ErrorState, LoadingState, Panel, StatusBadge, TypeBadge } from '../components'
 import { formatDate, parseArray, pretty } from '../hooks'
-import type { ExecutionLog, Task } from '../types'
+import type { ExecutionLog, SearchResult, Task } from '../types'
+
+function formatTimestamp(milliseconds: number) {
+  const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000))
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+  return [hours, minutes, seconds].map(value => String(value).padStart(2, '0')).join(':')
+}
+
+function sourceReferences(result: SearchResult) {
+  const references: string[] = []
+  if (result.section) references.push(result.section)
+  if (result.page) references.push(`第 ${result.page} 页`)
+  if (result.slide) references.push(`第 ${result.slide} 张幻灯片`)
+  const start = result.start_time || (result.start_ms != null ? formatTimestamp(result.start_ms) : '')
+  const end = result.end_time || (result.end_ms != null ? formatTimestamp(result.end_ms) : '')
+  if (start || end) references.push(end && end !== start ? `${start || '00:00:00'} – ${end}` : start || end)
+  return references
+}
+
+function ragResults(observation: unknown): SearchResult[] | null {
+  if (!observation || typeof observation !== 'object' || !('results' in observation)) return null
+  const results = (observation as { results?: unknown }).results
+  if (!Array.isArray(results)) return null
+  return results.filter((item): item is SearchResult => Boolean(item && typeof item === 'object' && 'source' in item && 'text' in item && 'score' in item))
+}
 
 export default function TaskDetail() {
   const location = useLocation()
@@ -31,8 +57,8 @@ export default function TaskDetail() {
     <div className="summary-strip customer-summary"><div><span>当前状态</span><strong>{task.status}</strong></div><div><span>处理步骤</span><strong>{task.steps?.length ?? 0}</strong></div><div><span>最后更新</span><strong>{updated?.toLocaleTimeString('zh-CN', { hour12: false }) ?? '—'}</strong></div></div>
     <Panel className={`answer-panel answer-panel-prominent answer-${task.status.toLowerCase()}`}><div className="answer-heading"><div className="answer-icon"><Sparkles size={22} /></div><div><span className="eyebrow">FLOWPILOT RESULT</span><h2>最终答案</h2></div><StatusBadge status={task.status} /></div><div className={`answer-content ${task.result ? '' : 'answer-placeholder'}`}>{task.result || (activelyExecuting ? 'FlowPilot 正在整理结果，完成后最终答案会显示在这里。' : task.status === 'Failed' ? '本次任务未能生成最终答案。你可以重新运行，或展开下方技术详情查看原因。' : '运行任务后，面向客户的最终答案会显示在这里。')}</div></Panel>
     <details className="technical-details"><summary><span><Wrench size={17} /><span><strong>技术执行详情</strong><small>步骤输入、知识引用、依赖关系与运行日志</small></span></span><ChevronDown size={18} /></summary><div className="technical-details-body"><div className="technical-meta"><div><span>任务 ID</span><strong>#{task.id}</strong></div><div><span>Replan 次数</span><strong>{task.replan_count ?? 0}<small> / 2</small></strong></div><div><span>任务类型</span><strong>{task.task_type === 'agent' ? 'Agent' : 'Workflow'}</strong></div></div><div className="detail-grid"><div className="detail-main"><Panel><div className="panel-heading"><div><span className="eyebrow">EXECUTION PLAN</span><h2>步骤时间线</h2></div><span className="muted">按计划顺序</span></div>
-      <div className="step-timeline">{task.steps?.map((step, index) => { const dependencies = parseArray(step.depends_on); return <article key={step.id} className={`step-card step-${step.status.toLowerCase()}`}><div className="step-rail"><span>{index + 1}</span></div><div className="step-body"><div className="step-card-head"><div><strong>{step.name}</strong><code><Wrench size={12} />{step.action_type}</code></div><StatusBadge status={step.status} /></div>
-        <div className="step-data"><div><span><Braces size={13} />输入</span><pre>{pretty(step.action_payload)}</pre></div>{dependencies.length > 0 && <div><span>依赖</span><div className="dependency-list">{dependencies.map(dep => <code key={dep}>{dep}</code>)}</div></div>}<div><span><FileText size={13} />Observation</span><pre>{pretty(step.observation)}</pre></div></div>
+      <div className="step-timeline">{task.steps?.map((step, index) => { const dependencies = parseArray(step.depends_on); const results = step.action_type === 'rag_query' ? ragResults(step.observation) : null; return <article key={step.id} className={`step-card step-${step.status.toLowerCase()}`}><div className="step-rail"><span>{index + 1}</span></div><div className="step-body"><div className="step-card-head"><div><strong>{step.name}</strong><code><Wrench size={12} />{step.action_type}</code></div><StatusBadge status={step.status} /></div>
+        <div className="step-data"><div><span><Braces size={13} />输入</span><pre>{pretty(step.action_payload)}</pre></div>{dependencies.length > 0 && <div><span>依赖</span><div className="dependency-list">{dependencies.map(dep => <code key={dep}>{dep}</code>)}</div></div>}<div><span><FileText size={13} />{step.action_type === 'rag_query' ? '知识库检索结果' : 'Observation'}</span>{results !== null ? results.length === 0 ? <div className="workflow-rag-empty">没有达到相似度阈值的知识片段。</div> : <div className="workflow-rag-results">{results.map((result, resultIndex) => { const references = sourceReferences(result); return <article key={`${result.document_id}-${result.version_id ?? 0}-${result.chunk_index}-${resultIndex}`}><header><strong><BookOpen size={13} />{result.source}</strong><em>{(result.score * 100).toFixed(1)}%</em></header>{references.length > 0 && <div className="source-reference-list">{references.map(reference => <span key={reference}>{reference}</span>)}</div>}<p>{result.text}</p></article> })}</div> : <pre>{pretty(step.observation)}</pre>}</div></div>
       </div></article> })}</div>
     </Panel></div><aside className="detail-side"><Panel className="logs-panel"><div className="panel-heading"><div><span className="eyebrow">LIVE TRACE</span><h2>执行日志</h2></div><TerminalSquare size={18} /></div><div className="log-list">{logs.length ? logs.map(log => <div className={`log-line log-${log.level.toLowerCase()}`} key={log.id}><span>{new Date(log.created_at).toLocaleTimeString('zh-CN', { hour12: false })}</span><i>{log.level}</i><p>{log.message}</p></div>) : <div className="empty-logs">运行任务后，执行日志会显示在这里。</div>}</div></Panel></aside></div></div></details>
   </>

@@ -21,6 +21,7 @@ func TestValidate(t *testing.T) {
 		{name: "valid shell", actionType: "shell_mock", payload: `{"exit_code":1}`},
 		{name: "negative shell exit", actionType: "shell_mock", payload: `{"exit_code":-1}`, wantErr: true},
 		{name: "large shell exit", actionType: "shell_mock", payload: `{"exit_code":256}`, wantErr: true},
+		{name: "RAG disabled", actionType: "rag_query", payload: `{"query":"policy"}`, wantErr: true},
 		{name: "unknown action", actionType: "email_mock", payload: `{}`, wantErr: true},
 		{name: "invalid JSON", actionType: "sleep", payload: `{`, wantErr: true},
 	}
@@ -33,6 +34,29 @@ func TestValidate(t *testing.T) {
 			}
 			if !tt.wantErr && err != nil {
 				t.Fatalf("Validate() returned error: %v", err)
+			}
+		})
+	}
+}
+
+func TestValidateRAGQueryWithCapability(t *testing.T) {
+	tests := []struct {
+		name    string
+		payload string
+		wantErr bool
+	}{
+		{name: "valid defaults", payload: `{"query":" policy "}`},
+		{name: "valid options", payload: `{"query":"policy","top_k":5,"min_score":0.6}`},
+		{name: "empty query", payload: `{"query":" "}`, wantErr: true},
+		{name: "top k too large", payload: `{"query":"policy","top_k":11}`, wantErr: true},
+		{name: "negative score", payload: `{"query":"policy","min_score":-0.1}`, wantErr: true},
+		{name: "unknown field", payload: `{"query":"policy","extra":true}`, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := Validate("rag_query", json.RawMessage(tt.payload), Capabilities{RAGQuery: true})
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("Validate() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
 	}
