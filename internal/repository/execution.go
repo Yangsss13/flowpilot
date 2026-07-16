@@ -16,7 +16,7 @@ var ErrStateConflict = errors.New("state conflict")
 type ExecutionRepository interface {
 	TransitionTask(ctx context.Context, taskID uint64, current, next domain.Status, level domain.LogLevel, message string) error
 	TransitionStep(ctx context.Context, taskID, stepID uint64, current, next domain.Status, level domain.LogLevel, message string) error
-	CompleteWorkflowStep(ctx context.Context, taskID, stepID uint64, observation json.RawMessage, level domain.LogLevel, message string) error
+	CompleteWorkflowStep(ctx context.Context, taskID, stepID uint64, observation json.RawMessage, taskResult string, level domain.LogLevel, message string) error
 }
 
 // CompleteWorkflowStep persists the output and Running -> Success transition
@@ -26,6 +26,7 @@ func (r *GormExecutionRepository) CompleteWorkflowStep(
 	ctx context.Context,
 	taskID, stepID uint64,
 	observation json.RawMessage,
+	taskResult string,
 	level domain.LogLevel,
 	message string,
 ) error {
@@ -45,6 +46,17 @@ func (r *GormExecutionRepository) CompleteWorkflowStep(
 		}
 		if result.RowsAffected != 1 {
 			return ErrStateConflict
+		}
+		if taskResult != "" {
+			result = tx.Model(&domain.Task{}).
+				Where("id = ? AND status = ?", taskID, domain.StatusRunning).
+				Update("result", taskResult)
+			if result.Error != nil {
+				return fmt.Errorf("save workflow result: %w", result.Error)
+			}
+			if result.RowsAffected != 1 {
+				return ErrStateConflict
+			}
 		}
 
 		logEntry := domain.ExecutionLog{TaskID: taskID, StepID: &stepID, Level: level, Message: message}

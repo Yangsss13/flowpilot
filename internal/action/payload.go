@@ -13,6 +13,7 @@ import (
 
 const MaxMockSleep = 30 * time.Second
 const MaxRAGQueryRunes = 2000
+const MaxSummaryInstructionRunes = 2000
 
 type SleepPayload struct {
 	DurationMS int `json:"duration_ms"`
@@ -32,8 +33,13 @@ type RAGQueryPayload struct {
 	MinScore float64 `json:"min_score,omitempty"`
 }
 
+type LLMSummarizePayload struct {
+	Instruction string `json:"instruction"`
+}
+
 type Capabilities struct {
-	RAGQuery bool
+	RAGQuery     bool
+	LLMSummarize bool
 }
 
 func Validate(actionType string, payload json.RawMessage, capabilities ...Capabilities) error {
@@ -53,9 +59,30 @@ func Validate(actionType string, payload json.RawMessage, capabilities ...Capabi
 		}
 		_, err := ParseRAGQuery(payload)
 		return err
+	case "llm_summarize":
+		if len(capabilities) == 0 || !capabilities[0].LLMSummarize {
+			return fmt.Errorf("llm_summarize is not available")
+		}
+		_, err := ParseLLMSummarize(payload)
+		return err
 	default:
 		return fmt.Errorf("unsupported action type %q", actionType)
 	}
+}
+
+func ParseLLMSummarize(payload json.RawMessage) (LLMSummarizePayload, error) {
+	var input LLMSummarizePayload
+	if err := decodeStrictPayload(payload, &input); err != nil {
+		return LLMSummarizePayload{}, fmt.Errorf("decode llm_summarize payload: %w", err)
+	}
+	input.Instruction = strings.TrimSpace(input.Instruction)
+	if input.Instruction == "" {
+		return LLMSummarizePayload{}, fmt.Errorf("llm_summarize instruction is required")
+	}
+	if utf8.RuneCountInString(input.Instruction) > MaxSummaryInstructionRunes {
+		return LLMSummarizePayload{}, fmt.Errorf("llm_summarize instruction must not exceed %d characters", MaxSummaryInstructionRunes)
+	}
+	return input, nil
 }
 
 func ParseRAGQuery(payload json.RawMessage) (RAGQueryPayload, error) {

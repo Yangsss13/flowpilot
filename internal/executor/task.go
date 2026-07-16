@@ -20,11 +20,15 @@ type TaskSource interface {
 type ExecutionStateStore interface {
 	TransitionTask(ctx context.Context, taskID uint64, current, next domain.Status, level domain.LogLevel, message string) error
 	TransitionStep(ctx context.Context, taskID, stepID uint64, current, next domain.Status, level domain.LogLevel, message string) error
-	CompleteWorkflowStep(ctx context.Context, taskID, stepID uint64, observation json.RawMessage, level domain.LogLevel, message string) error
+	CompleteWorkflowStep(ctx context.Context, taskID, stepID uint64, observation json.RawMessage, taskResult string, level domain.LogLevel, message string) error
 }
 
 type StepRunner interface {
 	Execute(ctx context.Context, step domain.TaskStep) (json.RawMessage, error)
+}
+
+type ContextualStepRunner interface {
+	ExecuteWithPrevious(ctx context.Context, step domain.TaskStep, previous []domain.TaskStep) (json.RawMessage, error)
 }
 
 type TaskExecutor struct {
@@ -71,7 +75,17 @@ func (e *TaskExecutor) Execute(ctx context.Context, taskID uint64) error {
 			return e.failTask(ctx, task.ID, fmt.Errorf("start step %d: %w", step.ID, err))
 		}
 
-		observation, executionErr := e.steps.Execute(ctx, step)
+		var observation json.RawMessage
+		var executionErr error
+		if contextual, ok := e.steps.(ContextualStepRunner); ok {
+			observation, executionErr = contextual.ExecuteWithPrevious(ctx, step, task.Steps[:i])
+		} else {
+			observation, executionErr = e.steps.Execute(ctx, step)
+		}
+		taskResult := ""
+		if executionErr == nil {
+			taskResult, executionErr = summaryTaskResult(step.ActionType, observation)
+		}
 		finalizeCtx, cancelFinalize := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 		if executionErr != nil {
 			stepErr := fmt.Errorf("%w: step %d: %v", ErrStepExecution, step.ID, executionErr)
@@ -85,11 +99,16 @@ func (e *TaskExecutor) Execute(ctx context.Context, taskID uint64) error {
 		}
 
 		if err := e.states.CompleteWorkflowStep(
-			finalizeCtx, task.ID, step.ID, observation,
+			finalizeCtx, task.ID, step.ID, observation, taskResult,
 			domain.LogLevelInfo, fmt.Sprintf("step %d succeeded", step.StepOrder),
 		); err != nil {
 			cancelFinalize()
 			return e.failTask(ctx, task.ID, fmt.Errorf("finish step %d: %w", step.ID, err))
+		}
+		task.Steps[i].Status = domain.StatusSuccess
+		task.Steps[i].Observation = append(json.RawMessage(nil), observation...)
+		if taskResult != "" {
+			task.Result = taskResult
 		}
 		cancelFinalize()
 	}
@@ -104,6 +123,22 @@ func (e *TaskExecutor) Execute(ctx context.Context, taskID uint64) error {
 		return fmt.Errorf("finish task %d: %w", task.ID, err)
 	}
 	return nil
+}
+
+func summaryTaskResult(actionType string, observation json.RawMessage) (string, error) {
+	if actionType != "llm_summarize" {
+		return "", nil
+	}
+	var output struct {
+		Summary string `json:"summary"`
+	}
+	if err := json.Unmarshal(observation, &output); err != nil {
+		return "", fmt.Errorf("decode llm_summarize observation: %w", err)
+	}
+	if output.Summary == "" {
+		return "", fmt.Errorf("llm_summarize observation has no summary")
+	}
+	return output.Summary, nil
 }
 
 func (e *TaskExecutor) failTask(ctx context.Context, taskID uint64, cause error) error {

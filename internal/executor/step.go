@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Yangsss13/flowpilot/internal/action"
 	"github.com/Yangsss13/flowpilot/internal/domain"
@@ -15,8 +17,21 @@ type WorkflowSearcher interface {
 	SearchAdvanced(ctx context.Context, query string, topK int, minScore float64) ([]rag.SearchResult, error)
 }
 
+type WorkflowSummarizer interface {
+	Summarize(ctx context.Context, instruction string, evidence json.RawMessage) (string, error)
+}
+
+const MaxWorkflowSummaryEvidenceBytes = 128 << 10
+const MaxWorkflowSummaryRunes = 20_000
+
 type StepExecutor struct {
-	searcher WorkflowSearcher
+	searcher   WorkflowSearcher
+	summarizer WorkflowSummarizer
+}
+
+func (e *StepExecutor) WithSummarizer(summarizer WorkflowSummarizer) *StepExecutor {
+	e.summarizer = summarizer
+	return e
 }
 
 func NewStepExecutor(searcher ...WorkflowSearcher) *StepExecutor {
@@ -28,6 +43,10 @@ func NewStepExecutor(searcher ...WorkflowSearcher) *StepExecutor {
 }
 
 func (e *StepExecutor) Execute(ctx context.Context, step domain.TaskStep) (json.RawMessage, error) {
+	return e.ExecuteWithPrevious(ctx, step, nil)
+}
+
+func (e *StepExecutor) ExecuteWithPrevious(ctx context.Context, step domain.TaskStep, previous []domain.TaskStep) (json.RawMessage, error) {
 	switch step.ActionType {
 	case "sleep":
 		return executeSleep(ctx, step.ActionPayload)
@@ -37,6 +56,8 @@ func (e *StepExecutor) Execute(ctx context.Context, step domain.TaskStep) (json.
 		return executeShellMock(step.ActionPayload)
 	case "rag_query":
 		return e.executeRAGQuery(ctx, step.ActionPayload)
+	case "llm_summarize":
+		return e.executeLLMSummarize(ctx, step.ActionPayload, previous)
 	default:
 		return nil, fmt.Errorf("unsupported action type %q", step.ActionType)
 	}
@@ -103,4 +124,62 @@ func (e *StepExecutor) executeRAGQuery(ctx context.Context, payload json.RawMess
 		Query   string             `json:"query"`
 		Results []rag.SearchResult `json:"results"`
 	}{Query: input.Query, Results: results})
+}
+
+func (e *StepExecutor) executeLLMSummarize(ctx context.Context, payload json.RawMessage, previous []domain.TaskStep) (json.RawMessage, error) {
+	if e.summarizer == nil {
+		return nil, fmt.Errorf("llm_summarize is not configured")
+	}
+	input, err := action.ParseLLMSummarize(payload)
+	if err != nil {
+		return nil, err
+	}
+	type evidenceStep struct {
+		StepName string             `json:"step_name"`
+		Query    string             `json:"query"`
+		Results  []rag.SearchResult `json:"results"`
+	}
+	evidence := make([]evidenceStep, 0, len(previous))
+	for _, step := range previous {
+		if step.ActionType != "rag_query" || step.Status != domain.StatusSuccess || len(step.Observation) == 0 {
+			continue
+		}
+		var observation struct {
+			Query   string             `json:"query"`
+			Results []rag.SearchResult `json:"results"`
+		}
+		if err := json.Unmarshal(step.Observation, &observation); err != nil {
+			return nil, fmt.Errorf("decode evidence from step %d: %w", step.ID, err)
+		}
+		if len(observation.Results) == 0 {
+			continue
+		}
+		evidence = append(evidence, evidenceStep{StepName: step.Name, Query: observation.Query, Results: observation.Results})
+	}
+	if len(evidence) == 0 {
+		return nil, fmt.Errorf("llm_summarize requires at least one successful rag_query observation")
+	}
+	evidenceJSON, err := json.Marshal(evidence)
+	if err != nil {
+		return nil, fmt.Errorf("encode workflow evidence: %w", err)
+	}
+	if len(evidenceJSON) > MaxWorkflowSummaryEvidenceBytes {
+		return nil, fmt.Errorf("workflow summary evidence exceeds %d bytes", MaxWorkflowSummaryEvidenceBytes)
+	}
+	summary, err := e.summarizer.Summarize(ctx, input.Instruction, evidenceJSON)
+	if err != nil {
+		return nil, fmt.Errorf("summarize workflow evidence: %w", err)
+	}
+	summary = strings.TrimSpace(summary)
+	if summary == "" {
+		return nil, fmt.Errorf("workflow summarizer returned an empty report")
+	}
+	if utf8.RuneCountInString(summary) > MaxWorkflowSummaryRunes {
+		return nil, fmt.Errorf("workflow summary exceeds %d characters", MaxWorkflowSummaryRunes)
+	}
+	return json.Marshal(struct {
+		Instruction   string `json:"instruction"`
+		Summary       string `json:"summary"`
+		EvidenceSteps int    `json:"evidence_steps"`
+	}{Instruction: input.Instruction, Summary: summary, EvidenceSteps: len(evidence)})
 }

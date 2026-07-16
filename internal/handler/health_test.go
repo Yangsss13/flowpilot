@@ -53,6 +53,7 @@ func TestCapabilityHandlerReturnsEnabledTools(t *testing.T) {
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/capabilities", nil))
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"rag_query"`) || strings.Contains(response.Body.String(), "input_schema") ||
+		!strings.Contains(response.Body.String(), `"workflow_summary_enabled":true`) ||
 		!strings.Contains(response.Body.String(), `"async_ingestion":true`) || !strings.Contains(response.Body.String(), `"media_ingestion":true`) ||
 		!strings.Contains(response.Body.String(), `".pdf":26214400`) || !strings.Contains(response.Body.String(), `".mp4":524288000`) ||
 		!strings.Contains(response.Body.String(), `"max_media_duration_seconds":7200`) {

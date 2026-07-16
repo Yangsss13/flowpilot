@@ -24,6 +24,7 @@ type KnowledgeApplication interface {
 	Delete(ctx context.Context, id uint64) error
 	GetJob(ctx context.Context, id uint64) (domain.IngestionJob, error)
 	Retry(ctx context.Context, id uint64) (domain.IngestionJob, error)
+	Reindex(ctx context.Context, documentID uint64) (domain.IngestionJob, error)
 	Cancel(ctx context.Context, id uint64) (domain.IngestionJob, error)
 	Search(ctx context.Context, request knowledge.SearchRequest) ([]rag.SearchResult, error)
 }
@@ -142,6 +143,18 @@ func (h *KnowledgeHandler) Retry(c *gin.Context) {
 		return
 	}
 	job, err := h.service.Retry(c.Request.Context(), id)
+	if h.writeError(c, err) {
+		return
+	}
+	c.JSON(http.StatusAccepted, job)
+}
+
+func (h *KnowledgeHandler) Reindex(c *gin.Context) {
+	id, ok := parseKnowledgeID(c, "id")
+	if !ok {
+		return
+	}
+	job, err := h.service.Reindex(c.Request.Context(), id)
 	if h.writeError(c, err) {
 		return
 	}

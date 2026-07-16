@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Yangsss13/flowpilot/internal/action"
 	"github.com/Yangsss13/flowpilot/internal/agent"
 	"github.com/Yangsss13/flowpilot/internal/checkpoint"
 	"github.com/Yangsss13/flowpilot/internal/config"
@@ -72,6 +73,7 @@ func main() {
 	var knowledgeConsumer *knowledge.Consumer
 	var knowledgeDispatcher *knowledge.Dispatcher
 	var knowledgeToolSearcher agent.RAGSearcher
+	var workflowKnowledgeSearcher executor.WorkflowSearcher
 	mediaEnabled := false
 	if cfg.AI.EmbeddingModel == "" {
 		log.Println("Knowledge API disabled: set AI_API_KEY and AI_EMBEDDING_MODEL to enable it")
@@ -118,7 +120,9 @@ func main() {
 			log.Fatalf("start Knowledge dispatcher: %v", err)
 		}
 		knowledgeService := knowledge.NewService(knowledgeRepository, knowledgeStorage, knowledgePublisher, ragService, cfg.Knowledge, mediaEnabled)
-		knowledgeToolSearcher = knowledge.NewAgentSearcher(knowledgeService)
+		managedSearcher := knowledge.NewAgentSearcher(knowledgeService)
+		knowledgeToolSearcher = managedSearcher
+		workflowKnowledgeSearcher = managedSearcher
 		var maxUploadBytes int64
 		for _, maximum := range cfg.Knowledge.MaxBytesByFormat {
 			if maximum > maxUploadBytes {
@@ -133,6 +137,7 @@ func main() {
 	}
 	toolDefinitions := toolRegistry.Definitions()
 	var planner *agent.Planner
+	var chatProvider *agent.OpenAICompatibleProvider
 	if cfg.AI.ChatModel == "" {
 		log.Println("Agent API disabled: set AI_API_KEY and AI_CHAT_MODEL to enable it")
 	} else if len(toolDefinitions) == 0 {
@@ -145,18 +150,21 @@ func main() {
 		if err != nil {
 			log.Fatalf("start Agent API: %v", err)
 		}
+		chatProvider = provider
 		validator, err := agent.NewValidator(toolDefinitions, agent.MaxPlanSteps)
 		if err != nil {
 			log.Fatalf("start Agent API validator: %v", err)
 		}
 		planner = agent.NewPlanner(provider, toolDefinitions, validator)
 	}
-	taskService := service.NewTaskService(taskRepository, ragService != nil)
-	var workflowSearcher executor.WorkflowSearcher
-	if ragService != nil {
-		workflowSearcher = ragService
+	workflowCapabilities := action.Capabilities{
+		RAGQuery: ragService != nil, LLMSummarize: ragService != nil && chatProvider != nil,
 	}
-	stepExecutor := executor.NewStepExecutor(workflowSearcher)
+	taskService := service.NewTaskService(taskRepository, workflowCapabilities)
+	stepExecutor := executor.NewStepExecutor(workflowKnowledgeSearcher)
+	if chatProvider != nil {
+		stepExecutor.WithSummarizer(chatProvider)
+	}
 	taskExecutor := executor.NewTaskExecutor(taskRepository, executionRepository, stepExecutor)
 	var agentRunner executor.TaskRunner
 	var agentHandler *handler.AgentHandler

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,6 +19,19 @@ type fakeWorkflowSearcher struct {
 	query    string
 	topK     int
 	minScore float64
+}
+
+type fakeWorkflowSummarizer struct {
+	summary     string
+	err         error
+	instruction string
+	evidence    json.RawMessage
+}
+
+func (f *fakeWorkflowSummarizer) Summarize(_ context.Context, instruction string, evidence json.RawMessage) (string, error) {
+	f.instruction = instruction
+	f.evidence = append(json.RawMessage(nil), evidence...)
+	return f.summary, f.err
 }
 
 func (f *fakeWorkflowSearcher) SearchAdvanced(_ context.Context, query string, topK int, minScore float64) ([]rag.SearchResult, error) {
@@ -82,6 +96,38 @@ func TestStepExecutorRAGFailureIsReturned(t *testing.T) {
 	_, err := NewStepExecutor(&fakeWorkflowSearcher{err: searchErr}).Execute(context.Background(), step("rag_query", `{"query":"policy"}`))
 	if !errors.Is(err, searchErr) {
 		t.Fatalf("Execute() error = %v, want wrapped search error", err)
+	}
+}
+
+func TestStepExecutorLLMSummarizeUsesSuccessfulRAGEvidence(t *testing.T) {
+	summarizer := &fakeWorkflowSummarizer{summary: "## 报告\nFlowPilot 使用 Go。[时间线.docx，第 2 页]"}
+	executor := NewStepExecutor().WithSummarizer(summarizer)
+	previous := []domain.TaskStep{{
+		ID: 7, Name: "检索技术栈", ActionType: "rag_query", Status: domain.StatusSuccess,
+		Observation: json.RawMessage(`{"query":"技术栈","results":[{"document_id":"53","source":"时间线.docx","page":2,"text":"FlowPilot 使用 Go","score":0.91,"chunk_index":1}]}`),
+	}}
+	observation, err := executor.ExecuteWithPrevious(context.Background(), step("llm_summarize", `{"instruction":"生成带引用的报告"}`), previous)
+	if err != nil {
+		t.Fatalf("ExecuteWithPrevious() error = %v", err)
+	}
+	if summarizer.instruction != "生成带引用的报告" || !strings.Contains(string(summarizer.evidence), "时间线.docx") {
+		t.Fatalf("instruction=%q evidence=%s", summarizer.instruction, summarizer.evidence)
+	}
+	var output struct {
+		Summary       string `json:"summary"`
+		EvidenceSteps int    `json:"evidence_steps"`
+	}
+	if err := json.Unmarshal(observation, &output); err != nil || output.EvidenceSteps != 1 || !strings.Contains(output.Summary, "FlowPilot 使用 Go") {
+		t.Fatalf("observation=%s error=%v", observation, err)
+	}
+}
+
+func TestStepExecutorLLMSummarizeRejectsMissingEvidence(t *testing.T) {
+	_, err := NewStepExecutor().WithSummarizer(&fakeWorkflowSummarizer{summary: "unused"}).ExecuteWithPrevious(
+		context.Background(), step("llm_summarize", `{"instruction":"总结"}`), nil,
+	)
+	if err == nil || !strings.Contains(err.Error(), "successful rag_query observation") {
+		t.Fatalf("ExecuteWithPrevious() error = %v", err)
 	}
 }
 

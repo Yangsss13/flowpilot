@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Yangsss13/flowpilot/internal/action"
 	"github.com/Yangsss13/flowpilot/internal/domain"
 	"github.com/Yangsss13/flowpilot/internal/repository"
 )
@@ -179,9 +180,42 @@ func TestTaskServiceRAGQueryRequiresRuntimeCapability(t *testing.T) {
 	}
 
 	enabledRepository := &fakeTaskRepository{}
-	task, err := NewTaskService(enabledRepository, true).Create(context.Background(), input)
+	task, err := NewTaskService(enabledRepository, action.Capabilities{RAGQuery: true}).Create(context.Background(), input)
 	if err != nil || enabledRepository.calls != 1 || task.Steps[0].ActionType != "rag_query" {
 		t.Fatalf("enabled capability task=%#v error=%v calls=%d", task, err, enabledRepository.calls)
+	}
+}
+
+func TestTaskServiceLLMSummarizeRequiresEvidenceAndFinalPosition(t *testing.T) {
+	capabilities := action.Capabilities{RAGQuery: true, LLMSummarize: true}
+	rag := CreateTaskStepInput{Name: "search", ActionType: "rag_query", ActionPayload: json.RawMessage(`{"query":"架构"}`)}
+	summary := CreateTaskStepInput{Name: "report", ActionType: "llm_summarize", ActionPayload: json.RawMessage(`{"instruction":"生成报告"}`)}
+	sleep := CreateTaskStepInput{Name: "wait", ActionType: "sleep", ActionPayload: json.RawMessage(`{"duration_ms":1}`)}
+	tests := []struct {
+		name    string
+		steps   []CreateTaskStepInput
+		caps    action.Capabilities
+		wantErr bool
+	}{
+		{name: "valid final summary", steps: []CreateTaskStepInput{rag, summary}, caps: capabilities},
+		{name: "summary without RAG", steps: []CreateTaskStepInput{sleep, summary}, caps: capabilities, wantErr: true},
+		{name: "summary is not final", steps: []CreateTaskStepInput{rag, summary, sleep}, caps: capabilities, wantErr: true},
+		{name: "summary capability disabled", steps: []CreateTaskStepInput{rag, summary}, caps: action.Capabilities{RAGQuery: true}, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &fakeTaskRepository{}
+			task, err := NewTaskService(repo, tt.caps).Create(context.Background(), CreateTaskInput{Name: "report", Steps: tt.steps})
+			if tt.wantErr {
+				if !errors.Is(err, ErrInvalidInput) || repo.calls != 0 {
+					t.Fatalf("error=%v calls=%d", err, repo.calls)
+				}
+				return
+			}
+			if err != nil || repo.calls != 1 || task.Steps[len(task.Steps)-1].ActionType != "llm_summarize" {
+				t.Fatalf("task=%#v error=%v calls=%d", task, err, repo.calls)
+			}
+		})
 	}
 }
 

@@ -69,6 +69,32 @@ func TestOpenAICompatibleProviderDecide(t *testing.T) {
 	}
 }
 
+func TestOpenAICompatibleProviderSummarizeUsesTextModeAndEvidence(t *testing.T) {
+	var received chatCompletionRequest
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if err := json.NewDecoder(request.Body).Decode(&received); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		writeChatResponse(t, writer, "## 总结\nFlowPilot 使用 Go。[README.md]")
+	}))
+	defer server.Close()
+
+	provider := newTestOpenAICompatibleProvider(t, server.URL, server.Client())
+	summary, err := provider.Summarize(context.Background(), "生成技术总结", json.RawMessage(`[{"source":"README.md","text":"FlowPilot 使用 Go"}]`))
+	if err != nil {
+		t.Fatalf("Summarize() error = %v", err)
+	}
+	if !strings.Contains(summary, "FlowPilot 使用 Go") {
+		t.Fatalf("summary = %q", summary)
+	}
+	if received.ResponseFormat != nil {
+		t.Fatalf("summary request unexpectedly enabled JSON mode: %#v", received.ResponseFormat)
+	}
+	if len(received.Messages) != 2 || !strings.Contains(received.Messages[0].Content, "Use only facts present in evidence") || !strings.Contains(received.Messages[1].Content, "README.md") {
+		t.Fatalf("unexpected summary messages: %#v", received.Messages)
+	}
+}
+
 func TestOpenAICompatibleProviderRejectsInvalidModelContent(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writeChatResponse(t, writer, "not JSON")
@@ -149,6 +175,16 @@ func TestNewOpenAICompatibleProviderValidatesConfiguration(t *testing.T) {
 				t.Fatal("NewOpenAICompatibleProvider() returned nil error")
 			}
 		})
+	}
+}
+
+func TestNewOpenAICompatibleProviderUsesBoundedDefaultTimeout(t *testing.T) {
+	provider, err := NewOpenAICompatibleProvider("https://example.com/v1", "test-key", "test-model", nil)
+	if err != nil {
+		t.Fatalf("NewOpenAICompatibleProvider() returned error: %v", err)
+	}
+	if provider.httpClient.Timeout != defaultChatTimeout {
+		t.Fatalf("default HTTP timeout = %v, want %v", provider.httpClient.Timeout, defaultChatTimeout)
 	}
 }
 

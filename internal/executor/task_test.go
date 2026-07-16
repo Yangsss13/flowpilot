@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/Yangsss13/flowpilot/internal/domain"
+	"github.com/Yangsss13/flowpilot/internal/rag"
 )
 
 type fakeTaskSource struct {
@@ -28,10 +30,11 @@ type transitionEvent struct {
 type fakeExecutionStateStore struct {
 	events       []transitionEvent
 	observations map[uint64]json.RawMessage
+	taskResults  map[uint64]string
 	err          error
 }
 
-func (f *fakeExecutionStateStore) CompleteWorkflowStep(ctx context.Context, _ uint64, stepID uint64, observation json.RawMessage, _ domain.LogLevel, _ string) error {
+func (f *fakeExecutionStateStore) CompleteWorkflowStep(ctx context.Context, taskID uint64, stepID uint64, observation json.RawMessage, taskResult string, _ domain.LogLevel, _ string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -46,6 +49,12 @@ func (f *fakeExecutionStateStore) CompleteWorkflowStep(ctx context.Context, _ ui
 		f.observations = make(map[uint64]json.RawMessage)
 	}
 	f.observations[stepID] = append(json.RawMessage(nil), observation...)
+	if taskResult != "" {
+		if f.taskResults == nil {
+			f.taskResults = make(map[uint64]string)
+		}
+		f.taskResults[taskID] = taskResult
+	}
 	return nil
 }
 
@@ -170,6 +179,29 @@ func TestTaskExecutorStopsAfterRAGFailure(t *testing.T) {
 		if event.kind == "step" && event.id == 12 {
 			t.Fatalf("step after failed RAG unexpectedly transitioned: %#v", event)
 		}
+	}
+}
+
+func TestTaskExecutorPersistsWorkflowSummaryAsTaskResult(t *testing.T) {
+	task := pendingTask()
+	task.Steps = []domain.TaskStep{
+		{ID: 11, Name: "search", StepOrder: 1, Status: domain.StatusPending, ActionType: "rag_query", ActionPayload: json.RawMessage(`{"query":"架构"}`)},
+		{ID: 12, Name: "report", StepOrder: 2, Status: domain.StatusPending, ActionType: "llm_summarize", ActionPayload: json.RawMessage(`{"instruction":"生成报告"}`)},
+	}
+	states := &fakeExecutionStateStore{}
+	searcher := &fakeWorkflowSearcher{results: []rag.SearchResult{{DocumentID: "53", Source: "时间线.docx", Text: "FlowPilot 使用 Go", Score: 0.9}}}
+	summarizer := &fakeWorkflowSummarizer{summary: "FlowPilot 使用 Go。[时间线.docx]"}
+	steps := NewStepExecutor(searcher).WithSummarizer(summarizer)
+	executor := NewTaskExecutor(&fakeTaskSource{task: task}, states, steps)
+
+	if err := executor.Execute(context.Background(), task.ID); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if states.taskResults[task.ID] != summarizer.summary {
+		t.Fatalf("task result = %q, want %q", states.taskResults[task.ID], summarizer.summary)
+	}
+	if len(states.observations) != 2 || !strings.Contains(string(states.observations[12]), "evidence_steps") {
+		t.Fatalf("observations = %#v", states.observations)
 	}
 }
 

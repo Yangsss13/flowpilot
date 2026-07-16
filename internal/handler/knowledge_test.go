@@ -57,6 +57,10 @@ func (f *fakeKnowledgeApplication) Retry(context.Context, uint64) (domain.Ingest
 	return domain.IngestionJob{}, f.err
 }
 
+func (f *fakeKnowledgeApplication) Reindex(_ context.Context, id uint64) (domain.IngestionJob, error) {
+	return domain.IngestionJob{ID: 9, DocumentID: id, Status: domain.IngestionJobQueued}, f.err
+}
+
 func (f *fakeKnowledgeApplication) Cancel(_ context.Context, id uint64) (domain.IngestionJob, error) {
 	f.cancelID = id
 	return domain.IngestionJob{ID: id, Status: domain.IngestionJobCanceled}, f.err

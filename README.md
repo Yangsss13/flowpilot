@@ -157,6 +157,7 @@ Pending ──→ Queued ──→ Running ──→ Success
 | `POST` | `/api/agent/tasks/:id/run` | 已实现 | 将 Agent 任务持久化发布到 RabbitMQ，成功返回 `202` |
 | `POST` | `/api/knowledge/documents` | 已实现 | 上传文档并返回 `202`、document/version/job ID |
 | `POST` | `/api/knowledge/documents/:id/versions` | 已实现 | 为已有文档创建异步摄取的新版本 |
+| `POST` | `/api/knowledge/documents/:id/reindex` | 已实现 | 为 Ready 文档的当前版本创建幂等的重新索引 Job |
 | `GET` | `/api/knowledge/documents` | 已实现 | 分页并按状态、格式、文件名筛选文档 |
 | `GET` | `/api/knowledge/documents/:id` | 已实现 | 查询当前版本、Chunk 数和最近 Job |
 | `DELETE` | `/api/knowledge/documents/:id` | 已实现 | 标记删除并最终一致清理原文件、元数据和向量 |
@@ -187,24 +188,33 @@ Pending ──→ Queued ──→ Running ──→ Success
 curl -X POST http://127.0.0.1:8080/api/tasks \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "提取项目面试要点",
-    "description": "按固定问题从知识库检索面试材料",
+    "name": "生成项目面试报告",
+    "description": "按固定问题收集知识证据，再生成可交付报告",
     "steps": [
       {
         "name": "检索项目架构",
         "action_type": "rag_query",
-        "action_payload": {"query": "FlowPilot 的核心后端链路是什么？", "top_k": 5, "min_score": 0.5}
+        "action_payload": {"query": "FlowPilot 的核心后端链路是什么？", "top_k": 3, "min_score": 0.5}
       },
       {
         "name": "检索并发控制",
         "action_type": "rag_query",
-        "action_payload": {"query": "项目如何避免任务被重复执行？", "top_k": 5, "min_score": 0.5}
+        "action_payload": {"query": "项目如何避免任务被重复执行？", "top_k": 3, "min_score": 0.5}
+      },
+      {
+        "name": "生成最终报告",
+        "action_type": "llm_summarize",
+        "action_payload": {
+          "instruction": "基于前面全部证据生成结构清晰的面试报告，保留来源引用；证据不足时明确说明。"
+        }
       }
     ]
   }'
 ```
 
-创建成功返回 `201 Created`，任务和步骤初始状态均为 `Pending`。`rag_query` 只有在 Embedding 与知识检索能力实际启用时才允许创建；否则 Service 返回安全的 `400`，前端也不会展示该动作。
+创建成功返回 `201 Created`，任务和步骤初始状态均为 `Pending`。`rag_query` 只有在 Embedding 与知识检索能力实际启用时才允许创建；`llm_summarize` 还要求 Chat 模型可用。能力不足时 Service 返回安全的 `400`，前端也不会展示对应动作。
+
+真正有业务价值的 Workflow 不是让用户手工填写“成功或失败”，而是把可重复的工作固化为确定流程：前序 `rag_query` 收集真实证据，最后一个 `llm_summarize` 只依据成功的检索 Observation 生成带引用报告。汇总步骤必须位于最后且前面至少有一个检索步骤；最终报告与步骤成功状态在同一个 MySQL 短事务中写入 `task.result`。模型只负责整理证据，不负责临时改变步骤，因此同一流程比 Agent 更可控、更容易复现和审计。
 
 Workflow 与 Agent 可以使用相同的知识检索能力，但控制权不同：Workflow 的查询和顺序由用户固定，任一步失败后停止；Agent 的计划和下一步由模型在服务端校验规则内决定。两者保持独立任务类型和执行器。
 

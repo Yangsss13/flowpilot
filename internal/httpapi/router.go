@@ -34,6 +34,7 @@ func NewRouter(
 	if knowledgeHandler != nil {
 		api.POST("/knowledge/documents", knowledgeHandler.Import)
 		api.POST("/knowledge/documents/:id/versions", knowledgeHandler.UploadVersion)
+		api.POST("/knowledge/documents/:id/reindex", knowledgeHandler.Reindex)
 		api.GET("/knowledge/documents", knowledgeHandler.List)
 		api.GET("/knowledge/documents/:id", knowledgeHandler.Get)
 		api.DELETE("/knowledge/documents/:id", knowledgeHandler.Delete)

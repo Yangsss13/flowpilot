@@ -74,13 +74,13 @@ func TestExecutionTransitionsWithMySQL(t *testing.T) {
 	}
 	observation := json.RawMessage(`{"query":"架构","results":[{"source":"README.md","text":"FlowPilot","score":0.9}]}`)
 	if err := executionRepository.CompleteWorkflowStep(
-		context.Background(), task.ID, stepID, observation,
+		context.Background(), task.ID, stepID, observation, "generated report",
 		domain.LogLevelInfo, "step succeeded",
 	); err != nil {
 		t.Fatalf("complete workflow step: %v", err)
 	}
 	loaded, err := NewGormTaskRepository(db).GetByID(context.Background(), task.ID)
-	if err != nil || len(loaded.Steps) != 1 || loaded.Steps[0].Status != domain.StatusSuccess {
+	if err != nil || loaded.Result != "generated report" || len(loaded.Steps) != 1 || loaded.Steps[0].Status != domain.StatusSuccess {
 		t.Fatalf("completed step=%#v error=%v", loaded, err)
 	}
 	var gotObservation, wantObservation any

@@ -73,13 +73,16 @@ type TaskStatsResult struct {
 }
 
 type TaskService struct {
-	repository      repository.TaskRepository
-	ragQueryEnabled bool
+	repository   repository.TaskRepository
+	capabilities action.Capabilities
 }
 
-func NewTaskService(repository repository.TaskRepository, ragQueryEnabled ...bool) *TaskService {
-	enabled := len(ragQueryEnabled) > 0 && ragQueryEnabled[0]
-	return &TaskService{repository: repository, ragQueryEnabled: enabled}
+func NewTaskService(repository repository.TaskRepository, capabilities ...action.Capabilities) *TaskService {
+	var configured action.Capabilities
+	if len(capabilities) > 0 {
+		configured = capabilities[0]
+	}
+	return &TaskService{repository: repository, capabilities: configured}
 }
 
 func (s *TaskService) Create(ctx context.Context, input CreateTaskInput) (*domain.Task, error) {
@@ -110,9 +113,24 @@ func (s *TaskService) Create(ctx context.Context, input CreateTaskInput) (*domai
 	}
 
 	for i, inputStep := range input.Steps {
-		step, err := buildPendingStep(i, inputStep, s.ragQueryEnabled)
+		step, err := buildPendingStep(i, inputStep, s.capabilities)
 		if err != nil {
 			return nil, err
+		}
+		if step.ActionType == "llm_summarize" {
+			if i != len(input.Steps)-1 {
+				return nil, fmt.Errorf("%w: llm_summarize must be the final step", ErrInvalidInput)
+			}
+			hasRAGEvidence := false
+			for _, previous := range task.Steps {
+				if previous.ActionType == "rag_query" {
+					hasRAGEvidence = true
+					break
+				}
+			}
+			if !hasRAGEvidence {
+				return nil, fmt.Errorf("%w: llm_summarize requires at least one preceding rag_query step", ErrInvalidInput)
+			}
 		}
 		task.Steps = append(task.Steps, step)
 	}
@@ -202,7 +220,7 @@ func (s *TaskService) Delete(ctx context.Context, id uint64) error {
 	return nil
 }
 
-func buildPendingStep(index int, input CreateTaskStepInput, ragQueryEnabled bool) (domain.TaskStep, error) {
+func buildPendingStep(index int, input CreateTaskStepInput, capabilities action.Capabilities) (domain.TaskStep, error) {
 	name := strings.TrimSpace(input.Name)
 	if name == "" {
 		return domain.TaskStep{}, fmt.Errorf("%w: step %d name is required", ErrInvalidInput, index+1)
@@ -214,7 +232,7 @@ func buildPendingStep(index int, input CreateTaskStepInput, ragQueryEnabled bool
 		return domain.TaskStep{}, fmt.Errorf("%w: step %d action payload must be between 1 and %d bytes", ErrInvalidInput, index+1, MaxActionPayloadBytes)
 	}
 	actionType := strings.TrimSpace(input.ActionType)
-	if err := action.Validate(actionType, input.ActionPayload, action.Capabilities{RAGQuery: ragQueryEnabled}); err != nil {
+	if err := action.Validate(actionType, input.ActionPayload, capabilities); err != nil {
 		return domain.TaskStep{}, fmt.Errorf("%w: step %d action is invalid: %v", ErrInvalidInput, index+1, err)
 	}
 

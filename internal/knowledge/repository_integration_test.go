@@ -191,6 +191,82 @@ func TestIngestionCancellationQueuedAndRunningIntegration(t *testing.T) {
 	}
 }
 
+func TestCreateReindexJobRequiresReadyDocumentAndIsAtomicIntegration(t *testing.T) {
+	if os.Getenv("FLOWPILOT_INTEGRATION") != "1" {
+		t.Skip("set FLOWPILOT_INTEGRATION=1 to run MySQL integration tests")
+	}
+	db, err := database.OpenMySQL(config.Load().Database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Migrate(db); err != nil {
+		t.Fatal(err)
+	}
+	repository := NewGormRepository(db)
+
+	createDocument := func(name string, status domain.DocumentStatus, currentVersion uint64) (domain.Document, domain.DocumentVersion) {
+		document := domain.Document{
+			Filename: name, MediaType: "text/plain", SizeBytes: 4,
+			Checksum: fmt.Sprintf("%064d", time.Now().UnixNano()), Status: status,
+			CurrentVersion: currentVersion,
+		}
+		version := domain.DocumentVersion{
+			StorageKey: fmt.Sprintf("test/%d.txt", time.Now().UnixNano()),
+			Filename:   document.Filename, MediaType: document.MediaType, SizeBytes: document.SizeBytes,
+			Checksum: document.Checksum, ParserVersion: ParserVersion,
+		}
+		initial := domain.IngestionJob{Status: domain.IngestionJobSuccess, Stage: domain.IngestionStageIndexing, Progress: 100}
+		if err := repository.CreateDocument(context.Background(), &document, &version, &initial); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Model(&domain.Document{}).Where("id = ?", document.ID).Updates(map[string]any{
+			"status": status, "current_version": currentVersion,
+		}).Error; err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { cleanupKnowledgeRows(db, document.ID) })
+		return document, version
+	}
+
+	notReady, _ := createDocument("not-ready.txt", domain.DocumentStatusQueued, 0)
+	if _, err := repository.CreateReindexJob(context.Background(), notReady.ID); !errors.Is(err, ErrConflict) {
+		t.Fatalf("CreateReindexJob() for non-ready document error = %v, want ErrConflict", err)
+	}
+
+	ready, version := createDocument("ready.txt", domain.DocumentStatusReady, 1)
+	var successes atomic.Int32
+	var created domain.IngestionJob
+	var createdMu sync.Mutex
+	var wait sync.WaitGroup
+	for index := 0; index < 20; index++ {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			job, createErr := repository.CreateReindexJob(context.Background(), ready.ID)
+			if createErr == nil {
+				successes.Add(1)
+				createdMu.Lock()
+				created = job
+				createdMu.Unlock()
+				return
+			}
+			if !errors.Is(createErr, ErrConflict) {
+				t.Errorf("CreateReindexJob() error = %v", createErr)
+			}
+		}()
+	}
+	wait.Wait()
+	if successes.Load() != 1 {
+		t.Fatalf("successful reindex jobs = %d, want 1", successes.Load())
+	}
+	if created.DocumentID != ready.ID || created.VersionID != version.ID || created.Status != domain.IngestionJobQueued {
+		t.Fatalf("created reindex job = %#v", created)
+	}
+	if _, err := repository.CreateReindexJob(context.Background(), ready.ID); !errors.Is(err, ErrConflict) {
+		t.Fatalf("second active reindex job error = %v, want ErrConflict", err)
+	}
+}
+
 func cleanupKnowledgeRows(db *gorm.DB, documentID uint64) {
 	db.Where("document_id = ?", documentID).Delete(&domain.DocumentArtifact{})
 	db.Where("document_id = ?", documentID).Delete(&domain.IngestionJob{})

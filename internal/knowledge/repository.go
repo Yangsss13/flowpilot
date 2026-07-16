@@ -127,6 +127,44 @@ func (r *GormRepository) CreateVersion(ctx context.Context, documentID uint64, v
 	})
 }
 
+func (r *GormRepository) CreateReindexJob(ctx context.Context, documentID uint64) (domain.IngestionJob, error) {
+	var job domain.IngestionJob
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var document domain.Document
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&document, documentID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrNotFound
+			}
+			return fmt.Errorf("lock document for reindex: %w", err)
+		}
+		if document.Status != domain.DocumentStatusReady || document.CurrentVersion == 0 {
+			return ErrConflict
+		}
+		var version domain.DocumentVersion
+		if err := tx.Where("document_id = ? AND version = ?", document.ID, document.CurrentVersion).First(&version).Error; err != nil {
+			return fmt.Errorf("load current version for reindex: %w", err)
+		}
+		var active int64
+		if err := tx.Model(&domain.IngestionJob{}).
+			Where("document_id = ? AND version_id = ? AND status IN ?", document.ID, version.ID, []domain.IngestionJobStatus{domain.IngestionJobQueued, domain.IngestionJobRunning}).
+			Count(&active).Error; err != nil {
+			return fmt.Errorf("check active reindex job: %w", err)
+		}
+		if active > 0 {
+			return ErrConflict
+		}
+		job = domain.IngestionJob{
+			DocumentID: document.ID, VersionID: version.ID,
+			Status: domain.IngestionJobQueued, Stage: domain.IngestionStageUpload,
+		}
+		if err := tx.Create(&job).Error; err != nil {
+			return fmt.Errorf("create reindex job: %w", err)
+		}
+		return nil
+	})
+	return job, err
+}
+
 func (r *GormRepository) GetDocument(ctx context.Context, id uint64) (DocumentDetail, error) {
 	var document domain.Document
 	if err := r.db.WithContext(ctx).First(&document, id).Error; err != nil {

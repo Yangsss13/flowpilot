@@ -14,10 +14,11 @@ type CapabilityTool struct {
 }
 
 type CapabilityResponse struct {
-	AgentEnabled     bool                 `json:"agent_enabled"`
-	Tools            []CapabilityTool     `json:"tools"`
-	KnowledgeEnabled bool                 `json:"knowledge_enabled"`
-	Knowledge        *KnowledgeCapability `json:"knowledge,omitempty"`
+	AgentEnabled           bool                 `json:"agent_enabled"`
+	Tools                  []CapabilityTool     `json:"tools"`
+	KnowledgeEnabled       bool                 `json:"knowledge_enabled"`
+	WorkflowSummaryEnabled bool                 `json:"workflow_summary_enabled"`
+	Knowledge              *KnowledgeCapability `json:"knowledge,omitempty"`
 }
 
 type KnowledgeCapability struct {
@@ -39,6 +40,7 @@ func NewCapabilityHandler(agentEnabled bool, definitions []agent.ToolDefinition,
 	}
 	response := CapabilityResponse{
 		AgentEnabled: agentEnabled, Tools: tools, KnowledgeEnabled: knowledgeEnabled,
+		WorkflowSummaryEnabled: agentEnabled && knowledgeEnabled,
 	}
 	if knowledgeEnabled && len(knowledge) > 0 {
 		value := knowledge[0]

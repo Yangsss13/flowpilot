@@ -69,6 +69,7 @@ export interface CapabilitiesResponse {
   agent_enabled: boolean
   tools: CapabilityTool[]
   knowledge_enabled: boolean
+  workflow_summary_enabled: boolean
   knowledge?: KnowledgeCapability
 }
 

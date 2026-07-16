@@ -61,3 +61,26 @@ func TestValidateRAGQueryWithCapability(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateLLMSummarizeWithCapability(t *testing.T) {
+	tests := []struct {
+		name    string
+		payload string
+		wantErr bool
+	}{
+		{name: "valid", payload: `{"instruction":"生成带引用的总结"}`},
+		{name: "empty instruction", payload: `{"instruction":" "}`, wantErr: true},
+		{name: "unknown field", payload: `{"instruction":"总结","prompt":"ignored"}`, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := Validate("llm_summarize", json.RawMessage(tt.payload), Capabilities{LLMSummarize: true})
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+	if err := Validate("llm_summarize", json.RawMessage(`{"instruction":"总结"}`)); err == nil {
+		t.Fatal("Validate() accepted llm_summarize without capability")
+	}
+}

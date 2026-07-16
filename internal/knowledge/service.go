@@ -66,6 +66,10 @@ func (s *AgentSearcher) Search(ctx context.Context, query string, topK int) ([]r
 	return s.service.Search(ctx, SearchRequest{Query: query, TopK: topK})
 }
 
+func (s *AgentSearcher) SearchAdvanced(ctx context.Context, query string, topK int, minScore float64) ([]rag.SearchResult, error) {
+	return s.service.Search(ctx, SearchRequest{Query: query, TopK: topK, MinScore: minScore})
+}
+
 func NewService(repository *GormRepository, storage ObjectStorage, publisher JobPublisher, search SearchEngine, cfg config.KnowledgeConfig, mediaEnabled ...bool) *Service {
 	service := &Service{repository: repository, storage: storage, publisher: publisher, search: search, config: cfg}
 	if len(mediaEnabled) > 0 {
@@ -217,6 +221,18 @@ func (s *Service) Retry(ctx context.Context, id uint64) (domain.IngestionJob, er
 		return domain.IngestionJob{}, fmt.Errorf("%w: job id is required", ErrInvalidInput)
 	}
 	job, err := s.repository.RetryJob(ctx, id, s.config.MaxRetries)
+	if err != nil {
+		return domain.IngestionJob{}, err
+	}
+	s.publishJob(ctx, job.ID)
+	return job, nil
+}
+
+func (s *Service) Reindex(ctx context.Context, documentID uint64) (domain.IngestionJob, error) {
+	if documentID == 0 {
+		return domain.IngestionJob{}, fmt.Errorf("%w: document id is required", ErrInvalidInput)
+	}
+	job, err := s.repository.CreateReindexJob(ctx, documentID)
 	if err != nil {
 		return domain.IngestionJob{}, err
 	}
