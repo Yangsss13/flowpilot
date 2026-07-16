@@ -20,6 +20,7 @@ type fakeTaskRepository struct {
 	err       error
 	calls     int
 	released  bool
+	deleted   bool
 }
 
 func (f *fakeTaskRepository) Create(_ context.Context, task *domain.Task) error {
@@ -67,6 +68,21 @@ func (f *fakeTaskRepository) ReleaseQueueReservation(_ context.Context, _ uint64
 func (f *fakeTaskRepository) GetByID(_ context.Context, _ uint64) (*domain.Task, error) {
 	f.calls++
 	return f.task, f.err
+}
+
+func (f *fakeTaskRepository) DeleteInactive(_ context.Context, _ uint64) error {
+	f.calls++
+	if f.err != nil {
+		return f.err
+	}
+	if f.task == nil {
+		return repository.ErrNotFound
+	}
+	if f.task.Status == domain.StatusQueued || f.task.Status == domain.StatusRunning {
+		return repository.ErrStateConflict
+	}
+	f.deleted = true
+	return nil
 }
 
 func TestTaskServiceCreateBuildsPendingOrderedTask(t *testing.T) {
@@ -204,6 +220,29 @@ func TestTaskServiceGetByIDMapsNotFound(t *testing.T) {
 	_, err := service.GetByID(context.Background(), 999)
 	if !errors.Is(err, ErrTaskNotFound) {
 		t.Fatalf("GetByID() error = %v, want ErrTaskNotFound", err)
+	}
+}
+
+func TestTaskServiceDeleteMapsRepositoryResults(t *testing.T) {
+	tests := []struct {
+		name string
+		repo *fakeTaskRepository
+		want error
+	}{
+		{name: "success", repo: &fakeTaskRepository{task: &domain.Task{ID: 1, Status: domain.StatusSuccess}}},
+		{name: "not found", repo: &fakeTaskRepository{}, want: ErrTaskNotFound},
+		{name: "active", repo: &fakeTaskRepository{task: &domain.Task{ID: 1, Status: domain.StatusRunning}}, want: ErrTaskConflict},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := NewTaskService(tt.repo).Delete(context.Background(), 1)
+			if !errors.Is(err, tt.want) {
+				t.Fatalf("Delete() error = %v, want %v", err, tt.want)
+			}
+			if tt.want == nil && !tt.repo.deleted {
+				t.Fatal("task was not deleted")
+			}
+		})
 	}
 }
 

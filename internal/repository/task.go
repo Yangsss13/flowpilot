@@ -20,6 +20,7 @@ type TaskRepository interface {
 	List(ctx context.Context, query TaskListQuery) (TaskListPage, error)
 	Stats(ctx context.Context) (TaskStats, error)
 	GetByID(ctx context.Context, id uint64) (*domain.Task, error)
+	DeleteInactive(ctx context.Context, id uint64) error
 	ReserveForQueue(ctx context.Context, id uint64, taskType domain.TaskType) (domain.Status, error)
 	ReleaseQueueReservation(ctx context.Context, id uint64, previous domain.Status) error
 }
@@ -131,6 +132,42 @@ func (r *GormTaskRepository) GetByID(ctx context.Context, id uint64) (*domain.Ta
 		return nil, fmt.Errorf("get task by id: %w", err)
 	}
 	return &task, nil
+}
+
+// DeleteInactive removes an unqueued task and its dependent records atomically.
+// Locking the task row prevents a concurrent queue reservation from racing the
+// deletion decision.
+func (r *GormTaskRepository) DeleteInactive(ctx context.Context, id uint64) error {
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var task domain.Task
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Select("id", "status").First(&task, id).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("load task for deletion: %w", err)
+		}
+		if task.Status == domain.StatusQueued || task.Status == domain.StatusRunning {
+			return ErrStateConflict
+		}
+		if err := tx.Where("task_id = ?", id).Delete(&domain.ExecutionLog{}).Error; err != nil {
+			return fmt.Errorf("delete task logs: %w", err)
+		}
+		if err := tx.Where("task_id = ?", id).Delete(&domain.TaskStep{}).Error; err != nil {
+			return fmt.Errorf("delete task steps: %w", err)
+		}
+		if result := tx.Delete(&domain.Task{}, id); result.Error != nil {
+			return fmt.Errorf("delete task: %w", result.Error)
+		} else if result.RowsAffected != 1 {
+			return ErrNotFound
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("delete task transaction: %w", err)
+	}
+	return nil
 }
 
 type GormTaskRepository struct {

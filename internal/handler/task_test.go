@@ -17,12 +17,13 @@ import (
 )
 
 type fakeTaskCreator struct {
-	input service.CreateTaskInput
-	task  *domain.Task
-	page  service.TaskListResult
-	stats service.TaskStatsResult
-	err   error
-	calls int
+	input     service.CreateTaskInput
+	task      *domain.Task
+	page      service.TaskListResult
+	stats     service.TaskStatsResult
+	err       error
+	calls     int
+	deletedID uint64
 }
 
 func (f *fakeTaskCreator) Create(_ context.Context, input service.CreateTaskInput) (*domain.Task, error) {
@@ -44,6 +45,12 @@ func (f *fakeTaskCreator) Stats(_ context.Context) (service.TaskStatsResult, err
 func (f *fakeTaskCreator) GetByID(_ context.Context, _ uint64) (*domain.Task, error) {
 	f.calls++
 	return f.task, f.err
+}
+
+func (f *fakeTaskCreator) Delete(_ context.Context, id uint64) error {
+	f.calls++
+	f.deletedID = id
+	return f.err
 }
 
 func TestTaskHandlerCreateReturns201(t *testing.T) {
@@ -176,6 +183,28 @@ func TestTaskHandlerGetByID(t *testing.T) {
 	}
 }
 
+func TestTaskHandlerDelete(t *testing.T) {
+	tests := []struct {
+		name       string
+		err        error
+		wantStatus int
+	}{
+		{name: "success", wantStatus: http.StatusNoContent},
+		{name: "not found", err: service.ErrTaskNotFound, wantStatus: http.StatusNotFound},
+		{name: "active", err: service.ErrTaskConflict, wantStatus: http.StatusConflict},
+		{name: "internal", err: errors.New("database unavailable"), wantStatus: http.StatusInternalServerError},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			creator := &fakeTaskCreator{err: tt.err}
+			response := performRequest(t, creator, http.MethodDelete, "/api/tasks/7", "")
+			if response.Code != tt.wantStatus || creator.deletedID != 7 {
+				t.Fatalf("status=%d deletedID=%d", response.Code, creator.deletedID)
+			}
+		})
+	}
+}
+
 func performCreateRequest(t *testing.T, creator TaskApplication, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	return performRequest(t, creator, http.MethodPost, "/api/tasks", body)
@@ -189,6 +218,7 @@ func performRequest(t *testing.T, creator TaskApplication, method, path, body st
 	router.POST("/api/tasks", handler.Create)
 	router.GET("/api/tasks", handler.List)
 	router.GET("/api/tasks/:id", handler.GetByID)
+	router.DELETE("/api/tasks/:id", handler.Delete)
 
 	request := httptest.NewRequest(method, path, bytes.NewBufferString(body))
 	request.Header.Set("Content-Type", "application/json")

@@ -23,6 +23,7 @@ func NewRouter(
 	api.GET("/tasks", taskHandler.List)
 	api.GET("/tasks/stats", taskHandler.Stats)
 	api.GET("/tasks/:id", taskHandler.GetByID)
+	api.DELETE("/tasks/:id", taskHandler.Delete)
 	api.POST("/tasks/:id/run", executionHandler.Run)
 	api.GET("/tasks/:id/logs", executionHandler.Logs)
 	api.GET("/capabilities", capabilityHandler.Get)

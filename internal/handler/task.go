@@ -19,6 +19,28 @@ type TaskApplication interface {
 	List(ctx context.Context, input service.ListTasksInput) (service.TaskListResult, error)
 	Stats(ctx context.Context) (service.TaskStatsResult, error)
 	GetByID(ctx context.Context, id uint64) (*domain.Task, error)
+	Delete(ctx context.Context, id uint64) error
+}
+
+func (h *TaskHandler) Delete(c *gin.Context) {
+	id, ok := parseTaskID(c)
+	if !ok {
+		return
+	}
+	err := h.service.Delete(c.Request.Context(), id)
+	if errors.Is(err, service.ErrTaskNotFound) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "task not found"})
+		return
+	}
+	if errors.Is(err, service.ErrTaskConflict) {
+		c.JSON(http.StatusConflict, gin.H{"error": "queued or running tasks cannot be deleted"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal server error"})
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 type TaskHandler struct {

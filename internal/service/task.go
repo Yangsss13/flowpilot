@@ -186,6 +186,20 @@ func (s *TaskService) GetByID(ctx context.Context, id uint64) (*domain.Task, err
 	return task, nil
 }
 
+func (s *TaskService) Delete(ctx context.Context, id uint64) error {
+	err := s.repository.DeleteInactive(ctx, id)
+	if errors.Is(err, repository.ErrNotFound) {
+		return ErrTaskNotFound
+	}
+	if errors.Is(err, repository.ErrStateConflict) {
+		return ErrTaskConflict
+	}
+	if err != nil {
+		return fmt.Errorf("delete task: %w", err)
+	}
+	return nil
+}
+
 func buildPendingStep(index int, input CreateTaskStepInput) (domain.TaskStep, error) {
 	name := strings.TrimSpace(input.Name)
 	if name == "" {

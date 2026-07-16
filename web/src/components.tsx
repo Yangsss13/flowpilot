@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { AlertTriangle, Bot, Boxes, CheckCircle2, CircleDashed, Clock3, LoaderCircle, RotateCw, Workflow } from 'lucide-react'
+import { AlertTriangle, Bot, Boxes, CheckCircle2, CircleDashed, Clock3, LoaderCircle, RotateCw, Trash2, Workflow } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import type { Status, Task, TaskType } from './types'
 import { formatDate } from './hooks'
@@ -34,9 +34,11 @@ export function EmptyState({ title, description, action }: { title: string; desc
   return <div className="state-box"><Boxes size={26} /><strong>{title}</strong><span>{description}</span>{action}</div>
 }
 
-export function TaskTable({ tasks }: { tasks: Task[] }) {
+export function TaskTable({ tasks, deleteConfirmID, deletingID, onDeleteRequest, onDeleteConfirm }: { tasks: Task[]; deleteConfirmID?: number | null; deletingID?: number | null; onDeleteRequest?: (task: Task) => void; onDeleteConfirm?: (task: Task) => void }) {
+  const canDelete = (task: Task) => task.status !== 'Queued' && task.status !== 'Running'
+  const deleteControl = (task: Task) => onDeleteRequest && onDeleteConfirm && (deleteConfirmID === task.id ? <button className="task-delete-confirm" onClick={() => onDeleteConfirm(task)} disabled={deletingID === task.id}>{deletingID === task.id ? <LoaderCircle className="spin" size={13} /> : null}确认删除</button> : <button className="task-delete" title={canDelete(task) ? '删除任务' : '排队或运行中的任务不能删除'} onClick={() => onDeleteRequest(task)} disabled={!canDelete(task) || deletingID === task.id}><Trash2 size={14} /></button>)
   return <><div className="table-wrap"><table><thead><tr><th>任务</th><th>类型</th><th>状态</th><th>步骤</th><th>创建时间</th><th></th></tr></thead><tbody>{tasks.map(task => <tr key={task.id}>
     <td><Link className="task-name" to={`/tasks/${task.id}`}>{task.name}<small>#{task.id} · {task.description || '暂无目标描述'}</small></Link></td>
-    <td><TypeBadge type={task.task_type} /></td><td><StatusBadge status={task.status} /></td><td>{task.step_count ?? task.steps?.length ?? '—'}</td><td>{formatDate(task.created_at)}</td><td><Link className="row-link" to={`/tasks/${task.id}`}>查看 →</Link></td>
-  </tr>)}</tbody></table></div><div className="task-mobile-list">{tasks.map(task => <Link className="task-mobile-card" to={`/tasks/${task.id}`} key={task.id}><div><strong>{task.name}</strong><small>#{task.id} · {formatDate(task.created_at)}</small></div><StatusBadge status={task.status} /><p>{task.description || '暂无目标描述'}</p><footer><TypeBadge type={task.task_type} /><span>{task.step_count ?? task.steps?.length ?? '—'} 个步骤</span><b>查看详情 →</b></footer></Link>)}</div></>
+    <td><TypeBadge type={task.task_type} /></td><td><StatusBadge status={task.status} /></td><td>{task.step_count ?? task.steps?.length ?? '—'}</td><td>{formatDate(task.created_at)}</td><td><div className="task-row-actions"><Link className="row-link" to={`/tasks/${task.id}`}>查看 →</Link>{deleteControl(task)}</div></td>
+  </tr>)}</tbody></table></div><div className="task-mobile-list">{tasks.map(task => <article className="task-mobile-card" key={task.id}><div><strong>{task.name}</strong><small>#{task.id} · {formatDate(task.created_at)}</small></div><StatusBadge status={task.status} /><p>{task.description || '暂无目标描述'}</p><footer><TypeBadge type={task.task_type} /><span>{task.step_count ?? task.steps?.length ?? '—'} 个步骤</span><Link to={`/tasks/${task.id}`}>查看详情 →</Link>{deleteControl(task)}</footer></article>)}</div></>
 }

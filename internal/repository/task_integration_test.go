@@ -133,3 +133,46 @@ func TestGormTaskRepositoryQueueReservation(t *testing.T) {
 		t.Fatalf("status=%s error=%v", loaded.Status, err)
 	}
 }
+
+func TestGormTaskRepositoryDeleteInactiveCascadesAndRejectsActive(t *testing.T) {
+	if os.Getenv("FLOWPILOT_INTEGRATION") != "1" {
+		t.Skip("set FLOWPILOT_INTEGRATION=1 to run MySQL integration tests")
+	}
+	db, err := database.OpenMySQL(config.Load().Database)
+	if err != nil {
+		t.Fatalf("open MySQL: %v", err)
+	}
+	if err := database.Migrate(db); err != nil {
+		t.Fatalf("migrate MySQL: %v", err)
+	}
+	repo := NewGormTaskRepository(db)
+	terminal := &domain.Task{Name: "delete-terminal-" + time.Now().Format("150405.000000000"), TaskType: domain.TaskTypeWorkflow, Status: domain.StatusSuccess, Steps: []domain.TaskStep{{Name: "one", StepOrder: 1, ActionType: "sleep", ActionPayload: json.RawMessage(`{"duration_ms":1}`), Status: domain.StatusSuccess}}}
+	if err := repo.Create(context.Background(), terminal); err != nil {
+		t.Fatalf("create terminal task: %v", err)
+	}
+	if err := db.Create(&domain.ExecutionLog{TaskID: terminal.ID, Level: domain.LogLevelInfo, Message: "done"}).Error; err != nil {
+		t.Fatalf("create execution log: %v", err)
+	}
+	if err := repo.DeleteInactive(context.Background(), terminal.ID); err != nil {
+		t.Fatalf("DeleteInactive() error = %v", err)
+	}
+	var taskCount, stepCount, logCount int64
+	db.Model(&domain.Task{}).Where("id = ?", terminal.ID).Count(&taskCount)
+	db.Model(&domain.TaskStep{}).Where("task_id = ?", terminal.ID).Count(&stepCount)
+	db.Model(&domain.ExecutionLog{}).Where("task_id = ?", terminal.ID).Count(&logCount)
+	if taskCount != 0 || stepCount != 0 || logCount != 0 {
+		t.Fatalf("remaining rows: tasks=%d steps=%d logs=%d", taskCount, stepCount, logCount)
+	}
+
+	active := &domain.Task{Name: "delete-active-" + time.Now().Format("150405.000000000"), TaskType: domain.TaskTypeWorkflow, Status: domain.StatusRunning, Steps: []domain.TaskStep{{Name: "one", StepOrder: 1, ActionType: "sleep", ActionPayload: json.RawMessage(`{"duration_ms":1}`), Status: domain.StatusRunning}}}
+	if err := repo.Create(context.Background(), active); err != nil {
+		t.Fatalf("create active task: %v", err)
+	}
+	t.Cleanup(func() {
+		db.Where("task_id = ?", active.ID).Delete(&domain.TaskStep{})
+		db.Delete(&domain.Task{}, active.ID)
+	})
+	if err := repo.DeleteInactive(context.Background(), active.ID); !errors.Is(err, ErrStateConflict) {
+		t.Fatalf("active deletion error = %v", err)
+	}
+}

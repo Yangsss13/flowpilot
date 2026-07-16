@@ -28,6 +28,7 @@ async function request<T>(path: string, init?: RequestInit, acceptedStatuses: nu
     if (!response.ok && !acceptedStatuses.includes(response.status)) {
       throw new ApiError(friendlyMessages[response.status] ?? '请求失败，请稍后重试。', response.status, classify(response.status))
     }
+    if (response.status === 204) return undefined as T
     return await response.json() as T
   } catch (error) {
     if (error instanceof ApiError) throw error
@@ -51,6 +52,7 @@ export const api = {
     return request<TaskListResponse>(`/api/tasks${suffix}`)
   },
   getTask: (id: number) => request<Task>(`/api/tasks/${id}`),
+  deleteTask: (id: number) => request<void>(`/api/tasks/${id}`, { method: 'DELETE' }),
   getLogs: (id: number) => request<ExecutionLog[]>(`/api/tasks/${id}/logs`),
   createWorkflow: (input: { name: string; description: string; steps: Array<{ name: string; action_type: string; action_payload: Record<string, number> }> }) => request<Task>('/api/tasks', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input),
